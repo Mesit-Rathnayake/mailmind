@@ -1,0 +1,16 @@
+# Google OAuth credentials
+credentials.json
+token.json
+New Text Document.txt
+
+# Environment variables
+.env
+.env.*
+
+# Go
+*.exe
+*.test
+
+# IDE
+.vscode/
+.idea/
