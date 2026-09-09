@@ -5,9 +5,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/Mesit-Rathnayake/mailmind/internal/api"
 	"github.com/Mesit-Rathnayake/mailmind/internal/database"
+	"github.com/Mesit-Rathnayake/mailmind/internal/worker"
 	"github.com/joho/godotenv"
 )
 
@@ -31,6 +34,21 @@ func main() {
 	log.Println("Database connection established!")
 
 	server := api.NewServer(db)
+
+	// Start Background Ingestion & Triage Worker
+	syncInterval := 5 * time.Minute
+	if intervalStr := os.Getenv("SYNC_INTERVAL_MINUTES"); intervalStr != "" {
+		if mins, err := strconv.Atoi(intervalStr); err == nil && mins > 0 {
+			syncInterval = time.Duration(mins) * time.Minute
+		}
+	}
+
+	w, err := worker.NewWorker(db, syncInterval)
+	if err != nil {
+		log.Printf("Worker setup warning: %v", err)
+	} else {
+		w.Start(ctx)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -34,9 +34,19 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/emails/priority", s.handleGetPriorityEmails)
 	mux.HandleFunc("/api/preferences", s.handleGetPreferences)
 	return s.corsMiddleware(mux)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "healthy",
+		"service": "mailmind-api",
+	})
 }
 
 func (s *Server) handleGetPriorityEmails(w http.ResponseWriter, r *http.Request) {

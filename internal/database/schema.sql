@@ -1,3 +1,9 @@
+-- =========================================================================
+-- MailMind Cloud PostgreSQL Schema
+-- Compatible with Neon, Supabase, and local PostgreSQL
+-- =========================================================================
+
+-- 1. Emails Table
 CREATE TABLE IF NOT EXISTS emails (
     id BIGSERIAL PRIMARY KEY,
     gmail_id TEXT NOT NULL UNIQUE,
@@ -30,10 +36,33 @@ CREATE TABLE IF NOT EXISTS emails (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Indexes for fast querying & worker queue processing
 CREATE INDEX IF NOT EXISTS idx_emails_ai_unprocessed 
     ON emails (received_at DESC) 
     WHERE ai_processed_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_emails_unscored 
-    ON emails (ai_processed_at DESC) 
-    WHERE ai_processed_at IS NOT NULL AND scored_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_emails_attention_score 
+    ON emails (attention_score DESC NULLS LAST, received_at DESC);
+
+-- 2. User Preferences Table
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id BIGSERIAL PRIMARY KEY,
+    rule_type TEXT NOT NULL,       -- 'CATEGORY', 'SENDER', 'DOMAIN'
+    target_value TEXT NOT NULL,    -- e.g., 'LEO', 'UNI', 'IEEE', 'linkedin.com'
+    score_modifier INT NOT NULL,   -- e.g., +45, +30, -25
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(rule_type, target_value)
+);
+
+-- Seed Default High-Priority Rules (Leo Club, IEEE, Uni, Security)
+INSERT INTO user_preferences (rule_type, target_value, score_modifier, description)
+VALUES 
+    ('CATEGORY', 'LEO', 45, 'Leo Club priority emails'),
+    ('CATEGORY', 'SECURITY', 35, 'Security alerts and OTPs'),
+    ('CATEGORY', 'UNI', 30, 'University and academic updates'),
+    ('CATEGORY', 'IEEE', 25, 'IEEE branch notifications'),
+    ('CATEGORY', 'JOB', 25, 'Internship and job opportunities'),
+    ('CATEGORY', 'WORK', 15, 'Work related emails'),
+    ('CATEGORY', 'PROMOTION', -25, 'Marketing and newsletter promotions')
+ON CONFLICT (rule_type, target_value) DO NOTHING;

@@ -81,11 +81,13 @@ export default function Home() {
     setMounted(true);
   }, []);
 
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
   const fetchEmails = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("http://localhost:8080/api/emails/priority?limit=50");
+      const res = await fetch(`${API_BASE_URL}/api/emails/priority?limit=50`);
       if (!res.ok) {
         throw new Error(`API error (${res.status})`);
       }
@@ -96,7 +98,7 @@ export default function Home() {
       }
     } catch (err: any) {
       console.error("Failed to fetch priority emails:", err);
-      setError("Unable to connect to Go API server (http://localhost:8080)");
+      setError(`Unable to connect to API server (${API_BASE_URL})`);
     } finally {
       setLoading(false);
     }

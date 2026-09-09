@@ -21,7 +21,7 @@ const (
 )
 
 func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
-	token, err := tokenFromFile(tokenFile)
+	token, err := loadToken()
 	if err != nil {
 		token = getTokenFromWeb(ctx, config)
 		saveToken(tokenFile, token)
@@ -117,6 +117,17 @@ func (c *commandRunner) Run(command string) error {
 	return nil
 }
 
+func loadToken() (*oauth2.Token, error) {
+	if envJSON := os.Getenv("GMAIL_TOKEN_JSON"); envJSON != "" {
+		token := &oauth2.Token{}
+		if err := json.Unmarshal([]byte(envJSON), token); err != nil {
+			return nil, fmt.Errorf("failed to parse GMAIL_TOKEN_JSON: %w", err)
+		}
+		return token, nil
+	}
+	return tokenFromFile(tokenFile)
+}
+
 func tokenFromFile(file string) (*oauth2.Token, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -125,7 +136,6 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	defer f.Close()
 
 	token := &oauth2.Token{}
-
 	if err := json.NewDecoder(f).Decode(token); err != nil {
 		return nil, err
 	}
@@ -142,19 +152,35 @@ func saveToken(path string, token *oauth2.Token) {
 		0600,
 	)
 	if err != nil {
-		log.Fatalf("Unable to save token: %v", err)
+		log.Printf("Warning: Unable to save token file: %v", err)
+		return
 	}
 	defer f.Close()
 
 	if err := json.NewEncoder(f).Encode(token); err != nil {
-		log.Fatalf("Unable to encode token: %v", err)
+		log.Printf("Warning: Unable to encode token: %v", err)
 	}
 }
 
+func loadCredentialsBytes() ([]byte, error) {
+	if envJSON := os.Getenv("GMAIL_CREDENTIALS_JSON"); envJSON != "" {
+		return []byte(envJSON), nil
+	}
+	return os.ReadFile(credentialsFile)
+}
+
 func NewClient(ctx context.Context) *http.Client {
-	b, err := os.ReadFile(credentialsFile)
+	client, err := NewClientSafe(ctx)
 	if err != nil {
-		log.Fatalf("Unable to read credentials.json: %v", err)
+		log.Fatalf("Gmail client initialization failed: %v", err)
+	}
+	return client
+}
+
+func NewClientSafe(ctx context.Context) (*http.Client, error) {
+	b, err := loadCredentialsBytes()
+	if err != nil {
+		return nil, fmt.Errorf("unable to read credentials (from file %s or GMAIL_CREDENTIALS_JSON env): %w", credentialsFile, err)
 	}
 
 	config, err := google.ConfigFromJSON(
@@ -162,8 +188,9 @@ func NewClient(ctx context.Context) *http.Client {
 		gmailapi.GmailReadonlyScope,
 	)
 	if err != nil {
-		log.Fatalf("Unable to parse credentials.json: %v", err)
+		return nil, fmt.Errorf("unable to parse credentials JSON: %w", err)
 	}
 
-	return getClient(ctx, config)
+	return getClient(ctx, config), nil
 }
+

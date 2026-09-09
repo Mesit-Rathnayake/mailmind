@@ -1,0 +1,13 @@
+.git
+.gitignore
+frontend/node_modules
+frontend/.next
+frontend/build
+frontend/out
+*.exe
+*.test
+*.lnk
+.env
+.env.*
+token.json
+credentials.json
