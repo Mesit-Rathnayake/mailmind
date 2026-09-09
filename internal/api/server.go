@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,12 +10,17 @@ import (
 	"github.com/Mesit-Rathnayake/mailmind/internal/database"
 )
 
-type Server struct {
-	db *database.DB
+type SyncRunner interface {
+	SyncOnce(ctx context.Context)
 }
 
-func NewServer(db *database.DB) *Server {
-	return &Server{db: db}
+type Server struct {
+	db     *database.DB
+	worker SyncRunner
+}
+
+func NewServer(db *database.DB, worker SyncRunner) *Server {
+	return &Server{db: db, worker: worker}
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
@@ -35,9 +41,21 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/api/sync", s.handleTriggerSync)
 	mux.HandleFunc("/api/emails/priority", s.handleGetPriorityEmails)
 	mux.HandleFunc("/api/preferences", s.handleGetPreferences)
 	return s.corsMiddleware(mux)
+}
+
+func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
+	if s.worker != nil {
+		go s.worker.SyncOnce(context.Background())
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "sync_triggered",
+		"message": "Email ingestion and triage started in background",
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

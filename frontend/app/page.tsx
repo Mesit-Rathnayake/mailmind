@@ -83,10 +83,19 @@ export default function Home() {
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-  const fetchEmails = async () => {
+  const fetchEmails = async (triggerSync = false) => {
     try {
       setLoading(true);
       setError(null);
+
+      if (triggerSync) {
+        try {
+          await fetch(`${API_BASE_URL}/api/sync`, { method: "POST" });
+        } catch (e) {
+          console.warn("Sync trigger failed:", e);
+        }
+      }
+
       const res = await fetch(`${API_BASE_URL}/api/emails/priority?limit=50`);
       if (!res.ok) {
         throw new Error(`API error (${res.status})`);
@@ -105,7 +114,7 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetchEmails();
+    fetchEmails(true);
   }, []);
 
   // Filtered emails list
@@ -265,7 +274,7 @@ export default function Home() {
         {/* Bottom Sync / Server status */}
         <div className="mt-auto border-t border-[#1c1d22] pt-3">
           <button
-            onClick={fetchEmails}
+            onClick={() => fetchEmails(true)}
             disabled={loading}
             className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-[#787c87] hover:bg-[#18191d] hover:text-white transition"
           >
@@ -290,10 +299,10 @@ export default function Home() {
             </h2>
           </div>
           <button
-            onClick={fetchEmails}
+            onClick={() => fetchEmails(true)}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-lg border border-[#262830] bg-[#1a1c21] px-2.5 py-1 text-[11px] font-medium text-[#8e929b] hover:text-white hover:border-[#3a3d47] transition disabled:opacity-50"
-            title="Sync Latest Emails"
+            title="Sync Latest Emails from Gmail"
           >
             <span className={loading ? "animate-spin" : ""}>↻</span>
             <span>{loading ? "Syncing..." : "Sync"}</span>
@@ -328,7 +337,19 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-2 space-y-1 py-2">
           {loading && emails.length === 0 ? (
             <div className="p-8 text-center text-xs text-[#787c87]">
-              Loading prioritized emails...
+              <div className="mb-2 animate-spin text-lg">↻</div>
+              Loading &amp; syncing emails...
+            </div>
+          ) : emails.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center text-xs text-[#787c87] gap-3">
+              <span>Inbox is empty. Click sync to ingest emails from Gmail.</span>
+              <button
+                onClick={() => fetchEmails(true)}
+                disabled={loading}
+                className="rounded-lg bg-[#2563eb] px-3.5 py-1.5 font-medium text-white shadow-sm hover:bg-blue-600 transition disabled:opacity-50"
+              >
+                {loading ? "Syncing..." : "Sync from Gmail"}
+              </button>
             </div>
           ) : filteredEmails.length === 0 ? (
             <div className="p-8 text-center text-xs text-[#787c87]">

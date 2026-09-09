@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -118,7 +119,7 @@ func (c *commandRunner) Run(command string) error {
 }
 
 func loadToken() (*oauth2.Token, error) {
-	if envJSON := os.Getenv("GMAIL_TOKEN_JSON"); envJSON != "" {
+	if envJSON := strings.TrimSpace(os.Getenv("GMAIL_TOKEN_JSON")); envJSON != "" {
 		token := &oauth2.Token{}
 		if err := json.Unmarshal([]byte(envJSON), token); err != nil {
 			return nil, fmt.Errorf("failed to parse GMAIL_TOKEN_JSON: %w", err)
@@ -163,10 +164,18 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 func loadCredentialsBytes() ([]byte, error) {
-	if envJSON := os.Getenv("GMAIL_CREDENTIALS_JSON"); envJSON != "" {
+	if envJSON := strings.TrimSpace(os.Getenv("GMAIL_CREDENTIALS_JSON")); envJSON != "" {
 		return []byte(envJSON), nil
 	}
 	return os.ReadFile(credentialsFile)
+}
+
+func getClientSafe(ctx context.Context, config *oauth2.Config) (*http.Client, error) {
+	token, err := loadToken()
+	if err != nil {
+		return nil, fmt.Errorf("OAuth token unavailable: %w", err)
+	}
+	return config.Client(ctx, token), nil
 }
 
 func NewClient(ctx context.Context) *http.Client {
@@ -180,7 +189,7 @@ func NewClient(ctx context.Context) *http.Client {
 func NewClientSafe(ctx context.Context) (*http.Client, error) {
 	b, err := loadCredentialsBytes()
 	if err != nil {
-		return nil, fmt.Errorf("unable to read credentials (from file %s or GMAIL_CREDENTIALS_JSON env): %w", credentialsFile, err)
+		return nil, fmt.Errorf("unable to read credentials (file %s or GMAIL_CREDENTIALS_JSON env): %w", credentialsFile, err)
 	}
 
 	config, err := google.ConfigFromJSON(
@@ -191,6 +200,6 @@ func NewClientSafe(ctx context.Context) (*http.Client, error) {
 		return nil, fmt.Errorf("unable to parse credentials JSON: %w", err)
 	}
 
-	return getClient(ctx, config), nil
+	return getClientSafe(ctx, config)
 }
 

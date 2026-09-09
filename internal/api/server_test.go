@@ -25,7 +25,7 @@ func TestGetPriorityEmailsEndpoint(t *testing.T) {
 	}
 	defer db.Close(ctx)
 
-	server := NewServer(db)
+	server := NewServer(db, nil)
 	handler := server.Routes()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/emails/priority", nil)

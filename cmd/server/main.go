@@ -33,8 +33,6 @@ func main() {
 
 	log.Println("Database connection established!")
 
-	server := api.NewServer(db)
-
 	// Start Background Ingestion & Triage Worker
 	syncInterval := 5 * time.Minute
 	if intervalStr := os.Getenv("SYNC_INTERVAL_MINUTES"); intervalStr != "" {
@@ -49,6 +47,8 @@ func main() {
 	} else {
 		w.Start(ctx)
 	}
+
+	server := api.NewServer(db, w)
 
 	port := os.Getenv("PORT")
 	if port == "" {
