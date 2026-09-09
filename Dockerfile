@@ -1,9 +1,12 @@
 # ==========================================
 # Build Stage
 # ==========================================
-FROM golang:1.24-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
+
+# Enable automatic toolchain downloading if go.mod has higher version requirement
+ENV GOTOOLCHAIN=auto
 
 # Install ca-certificates (required for HTTPS / Gmail / Gemini APIs)
 RUN apk --no-cache add ca-certificates git
