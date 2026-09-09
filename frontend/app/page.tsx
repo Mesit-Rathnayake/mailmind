@@ -105,6 +105,24 @@ export default function Home() {
       if (data && data.length > 0 && !selectedId) {
         setSelectedId(data[0].gmail_id);
       }
+
+      // If initially empty and sync was requested, re-check in 4 seconds
+      if (triggerSync && (!data || data.length === 0)) {
+        setTimeout(async () => {
+          try {
+            const retryRes = await fetch(`${API_BASE_URL}/api/emails/priority?limit=50`);
+            if (retryRes.ok) {
+              const retryData: RankedEmail[] = await retryRes.json();
+              if (retryData && retryData.length > 0) {
+                setEmails(retryData);
+                setSelectedId(retryData[0].gmail_id);
+              }
+            }
+          } catch (e) {
+            // silent retry
+          }
+        }, 4000);
+      }
     } catch (err: any) {
       console.error("Failed to fetch priority emails:", err);
       setError(`Unable to connect to API server (${API_BASE_URL})`);
@@ -175,7 +193,7 @@ export default function Home() {
               Mesith Rathnayake
             </div>
             <div className="truncate text-[11px] text-[#787c87]">
-              mesith@mailmind.ai
+              {emails.find((e) => e.recipient)?.recipient || "Gmail Account"}
             </div>
           </div>
         </div>
