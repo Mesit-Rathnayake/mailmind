@@ -18,6 +18,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Ensure dependencies are tidied for the Linux build
+RUN go mod tidy
+
 # Build statically linked binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o mailmind-server ./cmd/server
 
