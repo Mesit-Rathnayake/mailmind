@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -54,27 +55,31 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *Worker) SyncOnce(ctx context.Context) {
+func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 	log.Println("[Worker] Running scheduled email sync & triage...")
 
 	client, err := gmail.NewClientSafe(ctx)
 	if err != nil {
 		log.Printf("[Worker] Skipping sync - Gmail credentials unavailable: %v", err)
-		return
+		return 0, fmt.Errorf("gmail client setup failed: %w", err)
 	}
 
 	// 1. Fetch latest emails from Gmail
-	emails, err := gmail.FetchLatestEmails(ctx, client, 15)
+	emails, err := gmail.FetchLatestEmails(ctx, client, 20)
 	if err != nil {
 		log.Printf("[Worker] Error fetching emails from Gmail: %v", err)
-		return
+		return 0, fmt.Errorf("error fetching emails from Gmail: %w", err)
 	}
 
+	savedCount := 0
 	for _, e := range emails {
 		if err := w.db.SaveEmail(ctx, e); err != nil {
 			log.Printf("[Worker] Failed to save email %s: %v", e.ID, err)
+		} else {
+			savedCount++
 		}
 	}
+	log.Printf("[Worker] Fetched %d emails from Gmail (saved/checked: %d)", len(emails), savedCount)
 
 	// 2. Load user preferences for scoring
 	prefs, err := w.db.GetUserPreferences(ctx)
@@ -87,19 +92,19 @@ func (w *Worker) SyncOnce(ctx context.Context) {
 		w.analyzer, err = ai.NewGeminiAnalyzer(ctx)
 		if err != nil {
 			log.Printf("[Worker] Gemini analyzer unavailable: %v", err)
-			return
+			return savedCount, fmt.Errorf("gemini analyzer unavailable: %w", err)
 		}
 	}
 
-	unprocessed, err := w.db.GetUnprocessedEmails(ctx, 10)
+	unprocessed, err := w.db.GetUnprocessedEmails(ctx, 15)
 	if err != nil {
 		log.Printf("[Worker] Failed to get unprocessed emails: %v", err)
-		return
+		return savedCount, err
 	}
 
 	if len(unprocessed) == 0 {
 		log.Println("[Worker] Pipeline up-to-date. No unprocessed emails.")
-		return
+		return savedCount, nil
 	}
 
 	log.Printf("[Worker] Processing %d unanalyzed emails with AI...", len(unprocessed))
@@ -133,4 +138,5 @@ func (w *Worker) SyncOnce(ctx context.Context) {
 	}
 
 	log.Println("[Worker] Email sync & triage complete.")
+	return savedCount, nil
 }

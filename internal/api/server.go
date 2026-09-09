@@ -11,7 +11,7 @@ import (
 )
 
 type SyncRunner interface {
-	SyncOnce(ctx context.Context)
+	SyncOnce(ctx context.Context) (int, error)
 }
 
 type Server struct {
@@ -48,13 +48,30 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	if s.worker != nil {
-		go s.worker.SyncOnce(context.Background())
-	}
 	w.Header().Set("Content-Type", "application/json")
+	if s.worker == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"error":  "Worker service not initialized",
+		})
+		return
+	}
+
+	count, err := s.worker.SyncOnce(r.Context())
+	if err != nil {
+		log.Printf("Sync trigger error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "sync_triggered",
-		"message": "Email ingestion and triage started in background",
+		"status": "success",
+		"synced": count,
 	})
 }
 

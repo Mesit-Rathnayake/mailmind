@@ -118,10 +118,28 @@ func (c *commandRunner) Run(command string) error {
 	return nil
 }
 
+func cleanJSONEnv(val string) []byte {
+	s := strings.TrimSpace(val)
+	if s == "" {
+		return nil
+	}
+	if strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'") {
+		s = strings.Trim(s, "'")
+	}
+	if strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") {
+		var unquoted string
+		if err := json.Unmarshal([]byte(s), &unquoted); err == nil {
+			s = unquoted
+		}
+	}
+	return []byte(strings.TrimSpace(s))
+}
+
 func loadToken() (*oauth2.Token, error) {
-	if envJSON := strings.TrimSpace(os.Getenv("GMAIL_TOKEN_JSON")); envJSON != "" {
+	if raw := os.Getenv("GMAIL_TOKEN_JSON"); raw != "" {
+		cleaned := cleanJSONEnv(raw)
 		token := &oauth2.Token{}
-		if err := json.Unmarshal([]byte(envJSON), token); err != nil {
+		if err := json.Unmarshal(cleaned, token); err != nil {
 			return nil, fmt.Errorf("failed to parse GMAIL_TOKEN_JSON: %w", err)
 		}
 		return token, nil
@@ -164,8 +182,11 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 func loadCredentialsBytes() ([]byte, error) {
-	if envJSON := strings.TrimSpace(os.Getenv("GMAIL_CREDENTIALS_JSON")); envJSON != "" {
-		return []byte(envJSON), nil
+	if raw := os.Getenv("GMAIL_CREDENTIALS_JSON"); raw != "" {
+		cleaned := cleanJSONEnv(raw)
+		if len(cleaned) > 0 {
+			return cleaned, nil
+		}
 	}
 	return os.ReadFile(credentialsFile)
 }
