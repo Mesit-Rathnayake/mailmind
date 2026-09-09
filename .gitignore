@@ -10,6 +10,7 @@ New Text Document.txt
 # Go
 *.exe
 *.test
+*.lnk
 
 # IDE
 .vscode/

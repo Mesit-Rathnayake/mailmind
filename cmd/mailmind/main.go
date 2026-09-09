@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
+	"time"
 
+	"github.com/Mesit-Rathnayake/mailmind/internal/ai"
 	"github.com/Mesit-Rathnayake/mailmind/internal/database"
 	"github.com/Mesit-Rathnayake/mailmind/internal/gmail"
 	"github.com/joho/godotenv"
@@ -20,13 +21,15 @@ func main() {
 
 	ctx := context.Background()
 
-	// Load database connection string
+	// -------------------------
+	// Database
+	// -------------------------
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL is not set")
 	}
 
-	// Connect to PostgreSQL
 	db, err := database.New(ctx, databaseURL)
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
@@ -35,7 +38,10 @@ func main() {
 
 	log.Println("PostgreSQL connection successful!")
 
-	// Connect to Gmail
+	// -------------------------
+	// Gmail
+	// -------------------------
+
 	client := gmail.NewClient(ctx)
 
 	log.Println("Gmail authentication successful!")
@@ -47,22 +53,102 @@ func main() {
 
 	log.Printf("Fetched %d emails", len(emails))
 
-	for _, email := range emails {
-		if err := db.SaveEmail(ctx, email); err != nil {
-			log.Printf("Failed to save email %s: %v", email.ID, err)
+	// Save emails to database.
+	for _, e := range emails {
+		if err := db.SaveEmail(ctx, e); err != nil {
+			log.Printf("Failed to save email %s: %v", e.ID, err)
+			continue
+		}
+	}
+
+	// -------------------------
+	// Gemini
+	// -------------------------
+
+	analyzer, err := ai.NewGeminiAnalyzer(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create Gemini analyzer: %v", err)
+	}
+
+	log.Println("Gemini analyzer initialized!")
+
+	// -------------------------
+	// User Preferences
+	// -------------------------
+
+	prefs, err := db.GetUserPreferences(ctx)
+	if err != nil {
+		log.Fatalf("Failed to get user preferences: %v", err)
+	}
+
+	log.Printf("Loaded %d user preference rules", len(prefs))
+
+	// -------------------------
+	// AI Processing
+	// -------------------------
+
+	unprocessed, err := db.GetUnprocessedEmails(ctx, 5)
+	if err != nil {
+		log.Fatalf("Failed to get unprocessed emails: %v", err)
+	}
+
+	log.Printf("Found %d unprocessed emails", len(unprocessed))
+
+	for i, e := range unprocessed {
+		log.Printf(
+			"Analyzing email %d/%d: %s",
+			i+1,
+			len(unprocessed),
+			e.Subject,
+		)
+
+		analysis, err := analyzer.Analyze(
+			e.Subject,
+			e.From,
+			e.Body,
+		)
+
+		if err != nil {
+			log.Printf(
+				"AI analysis failed for email %s: %v",
+				e.ID,
+				err,
+			)
 			continue
 		}
 
-		log.Printf("Saved email: %s", email.Subject)
+		analysis.AttentionScore = ai.CalculateAttentionScore(e, analysis, prefs)
+
+		err = db.SaveAnalysis(
+			ctx,
+			e.ID,
+			analysis.Category,
+			analysis.Priority,
+			analysis.Summary,
+			analysis.ActionRequired,
+			analysis.Deadline,
+			analysis.AttentionScore,
+		)
+
+		if err != nil {
+			log.Printf(
+				"Failed to save analysis for email %s: %v",
+				e.ID,
+				err,
+			)
+			continue
+		}
+
+		log.Printf(
+			"Analyzed: [%s] [%s] [Score: %d] %s",
+			analysis.Category,
+			analysis.Priority,
+			analysis.AttentionScore,
+			analysis.Summary,
+		)
+
+		time.Sleep(1 * time.Second)
 	}
 
-	for i, email := range emails {
-		fmt.Printf("\n========== EMAIL %d ==========\n", i+1)
-		fmt.Printf("ID: %s\n", email.ID)
-		fmt.Printf("From: %s\n", email.From)
-		fmt.Printf("Subject: %s\n", email.Subject)
-		fmt.Printf("Date: %s\n", email.Date)
-		fmt.Printf("Snippet: %s\n", email.Snippet)
-		fmt.Printf("Body length: %d characters\n", len(email.Body))
-	}
+	log.Println("MailMind processing complete!")
 }

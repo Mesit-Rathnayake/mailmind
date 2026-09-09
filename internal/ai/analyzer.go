@@ -8,6 +8,7 @@ type Analysis struct {
 	Summary        string
 	ActionRequired bool
 	Deadline       *time.Time
+	AttentionScore int
 }
 
 type Analyzer interface {
