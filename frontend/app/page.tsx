@@ -119,6 +119,9 @@ export default function Home() {
   const [stats, setStats] = useState<EmailStats | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // Client-side In-Memory SWR Cache for Instant (0ms) Tab Transitions
+  const cacheRef = React.useRef<Record<string, RankedEmail[]>>({});
+
   // Filters state
   const [timeframe, setTimeframe] = useState<string>("all"); // "12h", "24h", "7d", "30d", "all"
   const [statusFilter, setStatusFilter] = useState<string>("all"); // "all", "unread", "read", "replied", "starred", "action"
@@ -150,6 +153,16 @@ export default function Home() {
   };
 
   const fetchEmails = async (triggerSync = false) => {
+    const cacheKey = `${timeframe}:${statusFilter}:${activeCategory}:${searchQuery.trim()}`;
+
+    // Instant UI Cache Hit
+    if (!triggerSync && cacheRef.current[cacheKey]) {
+      setEmails(cacheRef.current[cacheKey]);
+      setLoading(false);
+    } else if (emails.length === 0) {
+      setLoading(true);
+    }
+
     try {
       if (triggerSync) {
         setIsSyncing(true);
@@ -158,9 +171,8 @@ export default function Home() {
         } catch (e) {
           console.warn("Sync trigger warning:", e);
         }
-      } else {
-        setLoading(true);
       }
+
       setError(null);
 
       const params = new URLSearchParams();
@@ -175,6 +187,9 @@ export default function Home() {
         throw new Error(`API error (${res.status})`);
       }
       const data: RankedEmail[] = await res.json();
+      
+      // Update state and cache
+      cacheRef.current[cacheKey] = data || [];
       setEmails(data || []);
 
       if (data && data.length > 0) {
@@ -202,9 +217,17 @@ export default function Home() {
   }, []);
 
   const handleUpdateStatus = async (gmailId: string, updates: Partial<RankedEmail>) => {
+    // Optimistic UI state update
     setEmails((prev) =>
       prev.map((e) => (e.gmail_id === gmailId ? { ...e, ...updates } : e))
     );
+
+    // Also update all in-memory cached views
+    for (const key in cacheRef.current) {
+      cacheRef.current[key] = cacheRef.current[key].map((e) =>
+        e.gmail_id === gmailId ? { ...e, ...updates } : e
+      );
+    }
 
     try {
       await fetch(`${API_BASE_URL}/api/emails/status`, {

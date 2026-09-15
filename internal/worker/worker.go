@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -38,7 +40,7 @@ func (w *Worker) Start(ctx context.Context) {
 
 	// Run initial sync shortly after boot
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 		w.SyncOnce(ctx)
 	}()
 
@@ -69,8 +71,16 @@ func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("gmail client setup failed: %w", err)
 	}
 
-	// 1. Fetch latest emails from Gmail
-	emails, err := gmail.FetchLatestEmails(ctx, client, 20)
+	// 1. Determine batch fetch count (default 50)
+	fetchCount := int64(50)
+	if envFetch := os.Getenv("GMAIL_FETCH_COUNT"); envFetch != "" {
+		if c, err := strconv.ParseInt(envFetch, 10, 64); err == nil && c > 0 {
+			fetchCount = c
+		}
+	}
+
+	// 2. Fetch latest emails from Gmail using deduplication cache
+	emails, err := gmail.FetchLatestEmailsWithCache(ctx, client, fetchCount, nil)
 	if err != nil {
 		log.Printf("[Worker] Error fetching emails from Gmail: %v", err)
 		return 0, fmt.Errorf("error fetching emails from Gmail: %w", err)
@@ -84,15 +94,15 @@ func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 			savedCount++
 		}
 	}
-	log.Printf("[Worker] Fetched %d emails from Gmail (saved/checked: %d)", len(emails), savedCount)
+	log.Printf("[Worker] Synced %d emails from Gmail (saved/updated: %d)", len(emails), savedCount)
 
-	// 2. Load user preferences for scoring
+	// 3. Load user preferences for scoring
 	prefs, err := w.db.GetUserPreferences(ctx)
 	if err != nil {
 		log.Printf("[Worker] Failed to load preferences: %v", err)
 	}
 
-	// 3. Process unprocessed emails with the configured AI provider
+	// 4. Process unprocessed emails with AI
 	if w.analyzer == nil {
 		w.analyzer, err = ai.NewAnalyzerFromEnv(ctx)
 		if err != nil {
@@ -101,7 +111,14 @@ func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 		}
 	}
 
-	unprocessed, err := w.db.GetUnprocessedEmails(ctx, 15)
+	aiBatchSize := 20
+	if envAi := os.Getenv("AI_BATCH_SIZE"); envAi != "" {
+		if b, err := strconv.Atoi(envAi); err == nil && b > 0 {
+			aiBatchSize = b
+		}
+	}
+
+	unprocessed, err := w.db.GetUnprocessedEmails(ctx, aiBatchSize)
 	if err != nil {
 		log.Printf("[Worker] Failed to get unprocessed emails: %v", err)
 		return savedCount, err
@@ -139,7 +156,7 @@ func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 		}
 
 		log.Printf("[Worker] Analyzed %s -> [%s] [Score: %d]", e.Subject, analysis.Category, analysis.AttentionScore)
-		time.Sleep(1 * time.Second) // Rate limiting buffer
+		time.Sleep(300 * time.Millisecond) // Smooth rate limiting buffer
 	}
 
 	log.Println("[Worker] Email sync & triage complete.")

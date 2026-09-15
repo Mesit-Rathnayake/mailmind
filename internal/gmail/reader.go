@@ -157,6 +157,10 @@ func extractBody(payload *gmailapi.MessagePart) (string, error) {
 }
 
 func FetchLatestEmails(ctx context.Context, client *http.Client, count int64) ([]email.Email, error) {
+	return FetchLatestEmailsWithCache(ctx, client, count, nil)
+}
+
+func FetchLatestEmailsWithCache(ctx context.Context, client *http.Client, count int64, knownIDs map[string]bool) ([]email.Email, error) {
 	service, err := gmailapi.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gmail service: %w", err)
@@ -174,7 +178,12 @@ func FetchLatestEmails(ctx context.Context, client *http.Client, count int64) ([
 	emails := make([]email.Email, 0, len(list.Messages))
 
 	for _, message := range list.Messages {
-		// Request the complete Gmail message instead of metadata only.
+		// Skip downloading if we already have this email cached/persisted
+		if knownIDs != nil && knownIDs[message.Id] {
+			continue
+		}
+
+		// Request the complete Gmail message
 		msg, err := service.Users.Messages.Get(user, message.Id).
 			Format("full").
 			Do()

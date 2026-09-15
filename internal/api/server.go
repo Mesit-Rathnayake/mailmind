@@ -3,12 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Mesit-Rathnayake/mailmind/internal/ai"
+	"github.com/Mesit-Rathnayake/mailmind/internal/cache"
 	"github.com/Mesit-Rathnayake/mailmind/internal/database"
 	"github.com/Mesit-Rathnayake/mailmind/internal/email"
 )
@@ -21,6 +24,7 @@ type Server struct {
 	db       *database.DB
 	worker   SyncRunner
 	analyzer ai.Analyzer
+	cache    *cache.MemoryCache
 }
 
 func NewServer(db *database.DB, worker SyncRunner) *Server {
@@ -34,6 +38,7 @@ func NewServer(db *database.DB, worker SyncRunner) *Server {
 		db:       db,
 		worker:   worker,
 		analyzer: analyzer,
+		cache:    cache.NewMemoryCache(),
 	}
 }
 
@@ -86,6 +91,9 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate cache after sync
+	s.cache.Clear()
+
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",
 		"synced": count,
@@ -122,13 +130,24 @@ func (s *Server) handleGetPriorityEmails(w http.ResponseWriter, r *http.Request)
 		Limit:     limit,
 	}
 
+	cacheKey := fmt.Sprintf("ranked:%s:%s:%s:%s:%d", filter.TimeFrame, filter.Status, filter.Category, filter.Search, filter.Limit)
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		_ = json.NewEncoder(w).Encode(cached)
+		return
+	}
+
 	ranked, err := s.db.GetRankedEmails(r.Context(), filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	s.cache.Set(cacheKey, ranked, 45*time.Second)
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
 	if err := json.NewEncoder(w).Encode(ranked); err != nil {
 		log.Printf("Failed to encode response: %v", err)
 	}
@@ -140,13 +159,24 @@ func (s *Server) handleGetEmailStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheKey := "stats"
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		_ = json.NewEncoder(w).Encode(cached)
+		return
+	}
+
 	stats, err := s.db.GetEmailStats(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	s.cache.Set(cacheKey, stats, 45*time.Second)
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		log.Printf("Failed to encode stats: %v", err)
 	}
@@ -173,6 +203,9 @@ func (s *Server) handleUpdateEmailStatus(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Invalidate cache immediately on status change
+	s.cache.Clear()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -216,12 +249,12 @@ func (s *Server) handleGenerateReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save draft reply to db if gmail_id provided
 	if req.GmailID != "" {
 		_ = s.db.UpdateEmailStatus(r.Context(), email.EmailStatusUpdate{
 			GmailID:    req.GmailID,
 			DraftReply: &draft,
 		})
+		s.cache.Clear()
 	}
 
 	w.Header().Set("Content-Type", "application/json")

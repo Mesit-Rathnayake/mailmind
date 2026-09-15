@@ -56,6 +56,35 @@ func (db *DB) SaveEmail(ctx context.Context, e email.Email) error {
 	return nil
 }
 
+func (db *DB) GetExistingGmailIDs(ctx context.Context, ids []string) (map[string]bool, error) {
+	existing := make(map[string]bool)
+	if len(ids) == 0 {
+		return existing, nil
+	}
+
+	query := `
+		SELECT gmail_id
+		FROM emails
+		WHERE gmail_id = ANY($1)
+	`
+
+	rows, err := db.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing gmail ids: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			existing[id] = true
+		}
+	}
+
+	return existing, nil
+}
+
+
 func (db *DB) GetUnprocessedEmails(ctx context.Context, limit int) ([]email.Email, error) {
 	query := `
 		SELECT
