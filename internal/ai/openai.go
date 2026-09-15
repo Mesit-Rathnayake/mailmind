@@ -184,3 +184,8 @@ func validateAnalysis(category, priority string) error {
 
 	return nil
 }
+
+func (a *OpenAIAnalyzer) DraftReply(subject, sender, body, tone string) (string, error) {
+	return "Thank you for reaching out. I have received your email and will get back to you shortly.", nil
+}
+

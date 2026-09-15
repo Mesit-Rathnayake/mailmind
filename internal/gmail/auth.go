@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -21,17 +22,59 @@ const (
 	redirectURL     = "http://localhost:8080/oauth2callback"
 )
 
-func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
+func shouldRefreshToken(token *oauth2.Token) bool {
+	if token == nil {
+		return true
+	}
+	if token.AccessToken == "" {
+		return true
+	}
+	return token.RefreshToken == ""
+}
+
+func ensureValidToken(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
 	token, err := loadToken()
-	if err != nil {
-		token = getTokenFromWeb(ctx, config)
+	if err != nil || shouldRefreshToken(token) {
+		if err != nil {
+			log.Printf("No valid Gmail token found: %v", err)
+		} else {
+			log.Printf("Gmail token expired or invalid; requesting fresh authorization")
+		}
+
+		token, err = getTokenFromWeb(ctx, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reauthorize Gmail: %w", err)
+		}
 		saveToken(tokenFile, token)
+		return token, nil
 	}
 
+	refreshed, err := config.TokenSource(ctx, token).Token()
+	if err == nil && refreshed != nil && refreshed.AccessToken != "" {
+		if refreshed.AccessToken != token.AccessToken || !refreshed.Expiry.Equal(token.Expiry) {
+			saveToken(tokenFile, refreshed)
+		}
+		return refreshed, nil
+	}
+
+	log.Printf("Gmail token refresh failed: %v; requesting new authorization", err)
+	token, err = getTokenFromWeb(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reauthorize Gmail after refresh failure: %w", err)
+	}
+	saveToken(tokenFile, token)
+	return token, nil
+}
+
+func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
+	token, err := ensureValidToken(ctx, config)
+	if err != nil {
+		log.Fatalf("Gmail authentication failed: %v", err)
+	}
 	return config.Client(ctx, token)
 }
 
-func getTokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
+func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
 	config.RedirectURL = redirectURL
 
 	authURL := config.AuthCodeURL(
@@ -59,7 +102,6 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
 		}
 
 		fmt.Fprintln(w, "MailMind authentication successful! You can close this browser tab.")
-
 		codeChan <- code
 	})
 
@@ -83,17 +125,19 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
 	select {
 	case code = <-codeChan:
 	case err := <-errorChan:
-		log.Fatalf("OAuth authentication failed: %v", err)
+		return nil, fmt.Errorf("OAuth authentication failed: %w", err)
 	}
 
-	server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Warning: could not stop OAuth callback server: %v", err)
+	}
 
 	token, err := config.Exchange(ctx, code)
 	if err != nil {
-		log.Fatalf("Unable to exchange authorization code: %v", err)
+		return nil, fmt.Errorf("unable to exchange authorization code: %w", err)
 	}
 
-	return token
+	return token, nil
 }
 
 func openBrowser(targetURL string) error {
@@ -106,16 +150,13 @@ func openBrowser(targetURL string) error {
 		return fmt.Errorf("unexpected URL scheme: %s", parsedURL.Scheme)
 	}
 
-	// Windows
-	cmd := fmt.Sprintf("start \"\" \"%s\"", targetURL)
-
-	return (&commandRunner{}).Run(cmd)
+	return (&commandRunner{}).Run(targetURL)
 }
 
 type commandRunner struct{}
 
-func (c *commandRunner) Run(command string) error {
-	return nil
+func (c *commandRunner) Run(targetURL string) error {
+	return exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL).Run()
 }
 
 func cleanJSONEnv(val string) []byte {
@@ -192,7 +233,7 @@ func loadCredentialsBytes() ([]byte, error) {
 }
 
 func getClientSafe(ctx context.Context, config *oauth2.Config) (*http.Client, error) {
-	token, err := loadToken()
+	token, err := ensureValidToken(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("OAuth token unavailable: %w", err)
 	}
@@ -223,4 +264,3 @@ func NewClientSafe(ctx context.Context) (*http.Client, error) {
 
 	return getClientSafe(ctx, config)
 }
-

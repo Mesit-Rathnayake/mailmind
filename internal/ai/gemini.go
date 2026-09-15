@@ -211,3 +211,39 @@ Email body:
 		Deadline:       parseDeadline(result.Deadline),
 	}, nil
 }
+
+func (a *GeminiAnalyzer) DraftReply(subject, sender, body, tone string) (string, error) {
+	if tone == "" {
+		tone = "professional, concise, and polite"
+	}
+
+	cleanBody := strings.TrimSpace(body)
+	if len(cleanBody) > 3000 {
+		cleanBody = cleanBody[:3000] + "..."
+	}
+
+	prompt := fmt.Sprintf(`Draft a direct email reply to this email.
+Tone: %s
+Do not include subject lines or metadata markers. Provide only the email body response.
+
+Sender: %s
+Subject: %s
+Original Email:
+%s`, tone, sender, subject, cleanBody)
+
+	ctx := context.Background()
+	response, err := a.client.Models.GenerateContent(
+		ctx,
+		a.model,
+		genai.Text(prompt),
+		&genai.GenerateContentConfig{
+			Temperature: genai.Ptr(float32(0.3)),
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("gemini draft failed: %w", err)
+	}
+
+	return strings.TrimSpace(response.Text()), nil
+}
+

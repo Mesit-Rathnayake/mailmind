@@ -42,3 +42,8 @@ func (m *MockAnalyzer) Analyze(subject, sender, body string) (Analysis, error) {
 
 	return analysis, nil
 }
+
+func (m *MockAnalyzer) DraftReply(subject, sender, body, tone string) (string, error) {
+	return "Thank you for reaching out. I have received your email and will follow up shortly.", nil
+}
+

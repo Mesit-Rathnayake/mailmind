@@ -208,15 +208,29 @@ func FetchLatestEmails(ctx context.Context, client *http.Client, count int64) ([
 
 		parsedDate := parseEmailDate(date)
 
+		isRead := true
+		isStarred := false
+		for _, label := range msg.LabelIds {
+			if label == "UNREAD" {
+				isRead = false
+			}
+			if label == "STARRED" {
+				isStarred = true
+			}
+		}
+
 		emails = append(emails, email.Email{
-			ID:       msg.Id,
-			ThreadID: msg.ThreadId,
-			From:     from,
-			To:       to,
-			Subject:  subject,
-			Date:     parsedDate,
-			Snippet:  msg.Snippet,
-			Body:     body,
+			ID:        msg.Id,
+			ThreadID:  msg.ThreadId,
+			From:      from,
+			To:        to,
+			Subject:   subject,
+			Date:      parsedDate,
+			Snippet:   msg.Snippet,
+			Body:      body,
+			IsRead:    isRead,
+			IsStarred: isStarred,
+			Labels:    msg.LabelIds,
 		})
 	}
 

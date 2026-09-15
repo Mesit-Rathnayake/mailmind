@@ -11,6 +11,7 @@ New Text Document.txt
 *.exe
 *.test
 *.lnk
+*.log
 
 # IDE
 .vscode/

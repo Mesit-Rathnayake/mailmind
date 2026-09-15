@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, useTransition } from "react";
 
 type Priority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
@@ -12,6 +12,7 @@ interface RankedEmail {
   subject: string;
   received_at: string;
   snippet: string;
+  body: string;
   category: string;
   priority: Priority;
   summary: string;
@@ -19,13 +20,48 @@ interface RankedEmail {
   deadline: string | null;
   attention_score: number;
   ai_processed_at: string | null;
+  is_read: boolean;
+  is_replied: boolean;
+  is_archived: boolean;
+  is_starred: boolean;
+  read_at: string | null;
+  replied_at: string | null;
+  draft_reply: string;
 }
 
-const priorityColors: Record<string, { dot: string; text: string }> = {
-  CRITICAL: { dot: "bg-rose-500", text: "text-rose-400" },
-  HIGH: { dot: "bg-amber-500", text: "text-amber-400" },
-  MEDIUM: { dot: "bg-yellow-500", text: "text-yellow-400" },
-  LOW: { dot: "bg-emerald-500", text: "text-emerald-400" },
+interface EmailStats {
+  total: number;
+  last_12h: number;
+  last_24h: number;
+  last_7d: number;
+  last_30d: number;
+  unread: number;
+  read: number;
+  replied: number;
+  starred: number;
+  action_required: number;
+  categories: Record<string, number>;
+}
+
+const categoryConfig: Record<string, { label: string; icon: string; bg: string; text: string; border: string }> = {
+  LEO: { label: "Leo Club", icon: "🦁", bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30" },
+  IEEE: { label: "IEEE Branch", icon: "⚡", bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30" },
+  UNI: { label: "Faculty / Uni", icon: "🎓", bg: "bg-purple-500/15", text: "text-purple-400", border: "border-purple-500/30" },
+  JOB: { label: "Jobs & Careers", icon: "💼", bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30" },
+  SECURITY: { label: "Security & 2FA", icon: "🔒", bg: "bg-rose-500/15", text: "text-rose-400", border: "border-rose-500/30" },
+  FINANCE: { label: "Finance & Bills", icon: "💰", bg: "bg-teal-500/15", text: "text-teal-400", border: "border-teal-500/30" },
+  WORK: { label: "Work & Tasks", icon: "💻", bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30" },
+  PERSONAL: { label: "Personal", icon: "👤", bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30" },
+  PROMOTION: { label: "Promotions", icon: "🎁", bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30" },
+  SOCIAL: { label: "Social", icon: "👥", bg: "bg-sky-500/15", text: "text-sky-400", border: "border-sky-500/30" },
+  OTHER: { label: "General", icon: "📁", bg: "bg-zinc-500/15", text: "text-zinc-400", border: "border-zinc-500/30" },
+};
+
+const priorityConfig: Record<string, { dot: string; text: string; badge: string }> = {
+  CRITICAL: { dot: "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]", text: "text-rose-400", badge: "bg-rose-500/20 text-rose-300 border-rose-500/30" },
+  HIGH: { dot: "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]", text: "text-amber-400", badge: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
+  MEDIUM: { dot: "bg-yellow-500", text: "text-yellow-400", badge: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30" },
+  LOW: { dot: "bg-emerald-500", text: "text-emerald-400", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
 };
 
 function getInitials(name: string): string {
@@ -60,185 +96,313 @@ function formatShortDate(dateString: string): string {
   const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
   if (diffInSeconds < 60) return "Just now";
-  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
-  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
   if (diffInSeconds < 172800) return "Yesterday";
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function formatRelativeDeadline(deadlineString: string | null): { text: string; urgent: boolean } | null {
+  if (!deadlineString) return null;
+  const deadline = new Date(deadlineString);
+  const now = new Date();
+  const diffHours = (deadline.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+  if (diffHours < 0) return { text: "Overdue", urgent: true };
+  if (diffHours <= 24) return { text: `Due in ${Math.round(diffHours)}h`, urgent: true };
+  if (diffHours <= 72) return { text: `Due in ${Math.round(diffHours / 24)}d`, urgent: false };
+  return { text: `Due ${deadline.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, urgent: false };
+}
+
 export default function Home() {
   const [emails, setEmails] = useState<RankedEmail[]>([]);
+  const [stats, setStats] = useState<EmailStats | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeNav, setActiveNav] = useState<string>("Priority");
-  const [activeHub, setActiveHub] = useState<string>("ALL");
+
+  // Filters state
+  const [timeframe, setTimeframe] = useState<string>("all"); // "12h", "24h", "7d", "30d", "all"
+  const [statusFilter, setStatusFilter] = useState<string>("all"); // "all", "unread", "read", "replied", "starred", "action"
+  const [activeCategory, setActiveCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [starredIds, setStarredIds] = useState<Record<string, boolean>>({});
+
+  // AI Reply Draft State
+  const [draftTone, setDraftTone] = useState<string>("professional");
+  const [draftContent, setDraftContent] = useState<string>("");
+  const [isDrafting, setIsDrafting] = useState(false);
+  const [copiedDraft, setCopiedDraft] = useState(false);
+
+  // App UI State
   const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+  const fetchStats = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/emails/stats`);
+      if (res.ok) {
+        const data: EmailStats = await res.json();
+        setStats(data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch stats:", e);
+    }
+  };
 
   const fetchEmails = async (triggerSync = false) => {
     try {
-      setLoading(true);
-      setError(null);
-
       if (triggerSync) {
+        setIsSyncing(true);
         try {
           await fetch(`${API_BASE_URL}/api/sync`, { method: "POST" });
         } catch (e) {
-          console.warn("Sync trigger failed:", e);
+          console.warn("Sync trigger warning:", e);
         }
+      } else {
+        setLoading(true);
       }
+      setError(null);
 
-      const res = await fetch(`${API_BASE_URL}/api/emails/priority?limit=50`);
+      const params = new URLSearchParams();
+      if (timeframe && timeframe !== "all") params.append("timeframe", timeframe);
+      if (statusFilter && statusFilter !== "all") params.append("status", statusFilter);
+      if (activeCategory && activeCategory !== "ALL") params.append("category", activeCategory);
+      if (searchQuery.trim()) params.append("search", searchQuery.trim());
+      params.append("limit", "100");
+
+      const res = await fetch(`${API_BASE_URL}/api/emails/priority?${params.toString()}`);
       if (!res.ok) {
         throw new Error(`API error (${res.status})`);
       }
       const data: RankedEmail[] = await res.json();
       setEmails(data || []);
-      if (data && data.length > 0 && !selectedId) {
-        setSelectedId(data[0].gmail_id);
+
+      if (data && data.length > 0) {
+        // If current selectedId is not in data, pick the first
+        if (!selectedId || !data.some((e) => e.gmail_id === selectedId)) {
+          setSelectedId(data[0].gmail_id);
+          setDraftContent(data[0].draft_reply || "");
+        }
       }
 
-      // If initially empty and sync was requested, re-check in 4 seconds
-      if (triggerSync && (!data || data.length === 0)) {
-        setTimeout(async () => {
-          try {
-            const retryRes = await fetch(`${API_BASE_URL}/api/emails/priority?limit=50`);
-            if (retryRes.ok) {
-              const retryData: RankedEmail[] = await retryRes.json();
-              if (retryData && retryData.length > 0) {
-                setEmails(retryData);
-                setSelectedId(retryData[0].gmail_id);
-              }
-            }
-          } catch (e) {
-            // silent retry
-          }
-        }, 4000);
-      }
+      fetchStats();
     } catch (err: any) {
-      console.error("Failed to fetch priority emails:", err);
+      console.error("Failed to fetch emails:", err);
       setError(`Unable to connect to API server (${API_BASE_URL})`);
     } finally {
       setLoading(false);
+      setIsSyncing(false);
     }
   };
 
   useEffect(() => {
+    fetchEmails(false);
+  }, [timeframe, statusFilter, activeCategory]);
+
+  // Initial load with background sync
+  useEffect(() => {
     fetchEmails(true);
   }, []);
 
-  // Filtered emails list
-  const filteredEmails = emails.filter((e) => {
-    // 1. Sidebar Nav
-    if (activeNav === "Starred" && !starredIds[e.gmail_id]) return false;
-    if (activeNav === "Action Required" && !e.action_required) return false;
+  // Update status (is_read, is_replied, is_starred, is_archived)
+  const handleUpdateStatus = async (gmailId: string, updates: Partial<RankedEmail>) => {
+    // Optimistic UI update
+    setEmails((prev) =>
+      prev.map((e) => (e.gmail_id === gmailId ? { ...e, ...updates } : e))
+    );
 
-    // 2. Hub Filter
-    if (activeHub !== "ALL" && e.category?.toUpperCase() !== activeHub.toUpperCase()) {
-      return false;
+    try {
+      await fetch(`${API_BASE_URL}/api/emails/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gmail_id: gmailId,
+          ...updates,
+        }),
+      });
+      fetchStats();
+    } catch (err) {
+      console.error("Failed to update email status:", err);
     }
-
-    // 3. Search Query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchSubject = e.subject?.toLowerCase().includes(q);
-      const matchSender = e.sender?.toLowerCase().includes(q);
-      const matchSummary = e.summary?.toLowerCase().includes(q);
-      if (!matchSubject && !matchSender && !matchSummary) return false;
-    }
-
-    return true;
-  });
-
-  const selectedEmail = emails.find((e) => e.gmail_id === selectedId) || filteredEmails[0] || null;
-
-  const leoCount = emails.filter((e) => e.category?.toUpperCase() === "LEO").length;
-  const ieeeCount = emails.filter((e) => e.category?.toUpperCase() === "IEEE").length;
-  const uniCount = emails.filter((e) => e.category?.toUpperCase() === "UNI").length;
-  const actionCount = emails.filter((e) => e.action_required).length;
-
-  const toggleStar = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setStarredIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const selectedEmail = emails.find((e) => e.gmail_id === selectedId) || emails[0] || null;
+
+  // Whenever selectedEmail changes, update draft input content and auto-mark as read
+  useEffect(() => {
+    if (selectedEmail) {
+      setDraftContent(selectedEmail.draft_reply || "");
+      if (!selectedEmail.is_read) {
+        handleUpdateStatus(selectedEmail.gmail_id, { is_read: true });
+      }
+    }
+  }, [selectedId]);
+
+  // AI Reply Generation Handler
+  const handleGenerateAiReply = async () => {
+    if (!selectedEmail) return;
+    setIsDrafting(true);
+    setCopiedDraft(false);
+
+    try {
+      const tonePromptMap: Record<string, string> = {
+        professional: "professional, respectful, clear, and action-oriented",
+        confirm: "brief, polite confirmation and acknowledgment",
+        decline: "very polite, respectful decline with appreciation",
+        inquire: "courteous request for clarification and next steps",
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/emails/generate-reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gmail_id: selectedEmail.gmail_id,
+          subject: selectedEmail.subject,
+          sender: selectedEmail.sender,
+          body: selectedEmail.body || selectedEmail.snippet,
+          tone: tonePromptMap[draftTone] || "professional",
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to generate AI reply");
+      }
+
+      const data = await res.json();
+      if (data.draft) {
+        setDraftContent(data.draft);
+        setEmails((prev) =>
+          prev.map((e) => (e.gmail_id === selectedEmail.gmail_id ? { ...e, draft_reply: data.draft } : e))
+        );
+      }
+    } catch (err: any) {
+      console.error("Error generating draft:", err);
+      alert("Failed to generate draft: " + err.message);
+    } finally {
+      setIsDrafting(false);
+    }
+  };
+
+  const handleCopyDraft = () => {
+    if (!draftContent) return;
+    navigator.clipboard.writeText(draftContent);
+    setCopiedDraft(true);
+    setTimeout(() => setCopiedDraft(false), 2500);
+  };
+
+  // Keyboard shortcut listener for Search (⌘K / Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        const searchInput = document.getElementById("search-input");
+        searchInput?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0d0e11] font-sans text-[#e4e5e7] antialiased selection:bg-[#32363f]">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#090a0d] font-sans text-[#e2e4e9] antialiased selection:bg-[#32363f]">
       {/* ========================================================================= */}
-      {/* COLUMN 1: LEFT SIDEBAR (Client & Accounts) */}
+      {/* COLUMN 1: LEFT SIDEBAR NAVIGATION */}
       {/* ========================================================================= */}
-      <aside className="flex w-[240px] shrink-0 flex-col border-r border-[#1e2025] bg-[#121316] p-4 text-xs select-none">
-        {/* macOS Window Controls */}
-        <div className="mb-5 flex items-center gap-2">
-          <div className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-          <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
-          <div className="h-3 w-3 rounded-full bg-[#28c840]" />
+      <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#1a1c23] bg-[#0e1014] p-3 text-xs select-none">
+        {/* Brand & macOS Window Controls */}
+        <div className="mb-4 flex items-center justify-between px-2 pt-1">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 font-black text-white shadow-md text-sm">
+              M
+            </div>
+            <span className="font-bold text-[14px] tracking-tight text-white">MailMind</span>
+            <span className="rounded bg-[#1e222d] px-1.5 py-0.5 text-[9px] font-mono text-amber-400 font-semibold border border-[#2b303f]">
+              AI Triage
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+            <div className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+            <div className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+          </div>
         </div>
 
-        {/* User Profile */}
-        <div className="mb-5 flex items-center gap-3 rounded-xl p-1.5 transition hover:bg-[#1a1c21]">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-tr from-amber-600 to-orange-400 font-semibold text-white shadow-inner">
+        {/* User Card */}
+        <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#1e222d] bg-[#14171f]/80 p-2 shadow-sm">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-amber-600 to-orange-500 font-bold text-white text-xs shadow-inner">
             MR
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate font-medium text-white text-[13px]">
-              Mesith Rathnayake
-            </div>
-            <div className="truncate text-[11px] text-[#787c87]">
-              {emails.find((e) => e.recipient)?.recipient || "Gmail Account"}
+            <div className="truncate font-semibold text-white text-[12px]">Mesith Rathnayake</div>
+            <div className="truncate text-[10px] text-[#717684]">
+              {emails.find((e) => e.recipient)?.recipient || "Gmail Sync Active"}
             </div>
           </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative mb-5">
-          <span className="absolute left-2.5 top-2 text-[11px] text-[#787c87]">🔍</span>
+        {/* Search Input */}
+        <div className="relative mb-4">
+          <span className="absolute left-2.5 top-2 text-[11px] text-[#717684]">🔍</span>
           <input
+            id="search-input"
             type="text"
-            placeholder="Search"
+            placeholder="Search emails (⌘K)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 w-full rounded-lg bg-[#1a1c21] pl-7 pr-7 text-xs text-white placeholder-[#787c87] focus:outline-none focus:ring-1 focus:ring-[#373a44]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") fetchEmails(false);
+            }}
+            className="h-8 w-full rounded-lg border border-[#1e222d] bg-[#14171f] pl-7 pr-7 text-xs text-white placeholder-[#5a5f6e] focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition"
           />
-          <span className="absolute right-2.5 top-2 text-[10px] text-[#555a64] font-mono">⌘K</span>
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setTimeout(() => fetchEmails(false), 0);
+              }}
+              className="absolute right-2 top-2 text-[11px] text-[#717684] hover:text-white"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
-        {/* Main Navigation */}
+        {/* Status Navigation Sections */}
+        <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
+          Views & Status
+        </div>
         <div className="space-y-0.5">
           {[
-            { key: "Priority", name: "Priority Inbox", icon: "⭐", count: emails.length },
-            { key: "Action Required", name: "Action Items", icon: "⚡", count: actionCount, badgeColor: "bg-amber-500/20 text-amber-300" },
-            { key: "Starred", name: "Favorites", icon: "📌", count: Object.values(starredIds).filter(Boolean).length },
-            { key: "All", name: "All Mail", icon: "📥", count: emails.length },
+            { key: "all", name: "All Priority", icon: "⭐", count: stats?.total },
+            { key: "unread", name: "Unread / Unopened", icon: "🔵", count: stats?.unread, badgeColor: "bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30" },
+            { key: "read", name: "Read / Viewed", icon: "👁️", count: stats?.read },
+            { key: "action", name: "Action Required", icon: "⚡", count: stats?.action_required, badgeColor: "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" },
+            { key: "replied", name: "Replied", icon: "↩️", count: stats?.replied },
+            { key: "starred", name: "Favorites", icon: "📌", count: stats?.starred },
           ].map((item) => (
             <button
               key={item.key}
-              onClick={() => {
-                setActiveNav(item.key);
-                setActiveHub("ALL");
-              }}
+              onClick={() => setStatusFilter(item.key)}
               className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition ${
-                activeNav === item.key && activeHub === "ALL"
-                  ? "bg-[#212329] font-medium text-white shadow-sm"
-                  : "text-[#8e929b] hover:bg-[#18191d] hover:text-[#d1d3d8]"
+                statusFilter === item.key
+                  ? "bg-[#1c202a] font-semibold text-white shadow-sm border border-[#2b303f]"
+                  : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
               }`}
             >
-              <div className="flex items-center gap-2.5">
-                <span className="text-[13px] opacity-80">{item.icon}</span>
-                <span>{item.name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px]">{item.icon}</span>
+                <span className="text-[12px]">{item.name}</span>
               </div>
-              {item.count > 0 && (
+              {item.count !== undefined && item.count > 0 && (
                 <span
-                  className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
-                    item.badgeColor || (activeNav === item.key ? "bg-[#2c2f38] text-white" : "text-[#787c87]")
+                  className={`rounded-full px-2 py-0.2 text-[10px] ${
+                    item.badgeColor || (statusFilter === item.key ? "bg-[#2c303f] text-white" : "text-[#717684]")
                   }`}
                 >
                   {item.count}
@@ -248,223 +412,273 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Hubs / Folders Section */}
-        <div className="mt-6">
-          <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-wider text-[#5a5f6b]">
-            <span>Hubs & Focus</span>
-            <span className="text-xs">▾</span>
-          </div>
+        {/* Hubs / Categories */}
+        <div className="mt-4 mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
+          <span>Category Hubs</span>
+          <span className="text-xs">▾</span>
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar pr-1">
+          <button
+            onClick={() => setActiveCategory("ALL")}
+            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
+              activeCategory === "ALL"
+                ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
+                : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span>🌐</span>
+              <span>All Categories</span>
+            </div>
+            {stats?.total !== undefined && (
+              <span className="text-[10px] text-[#717684]">{stats.total}</span>
+            )}
+          </button>
 
-          <div className="space-y-0.5">
-            {[
-              { key: "LEO", name: "Leo Club", color: "bg-amber-400", count: leoCount },
-              { key: "IEEE", name: "IEEE Branch", color: "bg-sky-400", count: ieeeCount },
-              { key: "UNI", name: "Faculty / Uni", color: "bg-purple-400", count: uniCount },
-              { key: "JOB", name: "Internships", color: "bg-emerald-400" },
-              { key: "SECURITY", name: "Security & 2FA", color: "bg-rose-400" },
-            ].map((hub) => (
+          {Object.entries(categoryConfig).map(([key, config]) => {
+            const count = stats?.categories?.[key] || 0;
+            return (
               <button
-                key={hub.key}
-                onClick={() => {
-                  setActiveHub(hub.key);
-                  setActiveNav(hub.name);
-                }}
-                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition ${
-                  activeHub === hub.key
-                    ? "bg-[#212329] font-medium text-white shadow-sm"
-                    : "text-[#8e929b] hover:bg-[#18191d] hover:text-[#d1d3d8]"
+                key={key}
+                onClick={() => setActiveCategory(key)}
+                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
+                  activeCategory === key
+                    ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
+                    : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <span className={`h-2 w-2 rounded-full ${hub.color}`} />
-                  <span>{hub.name}</span>
+                <div className="flex items-center gap-2">
+                  <span>{config.icon}</span>
+                  <span>{config.label}</span>
                 </div>
-                {hub.count !== undefined && hub.count > 0 && (
-                  <span className="rounded-full bg-[#1e2026] px-1.5 text-[10px] font-semibold text-[#8e929b]">
-                    {hub.count}
+                {count > 0 && (
+                  <span className={`rounded-full px-1.5 text-[10px] font-semibold ${config.bg} ${config.text}`}>
+                    {count}
                   </span>
                 )}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Bottom Sync / Server status */}
-        <div className="mt-auto border-t border-[#1c1d22] pt-3">
+        {/* Sync Footer */}
+        <div className="mt-auto border-t border-[#1a1c23] pt-3">
           <button
             onClick={() => fetchEmails(true)}
-            disabled={loading}
-            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-[#787c87] hover:bg-[#18191d] hover:text-white transition"
+            disabled={isSyncing}
+            className="flex w-full items-center justify-between rounded-lg border border-[#1e222d] bg-[#14171f] px-3 py-2 text-[#8e93a2] hover:bg-[#1c202a] hover:text-white transition disabled:opacity-50"
           >
             <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${error ? "bg-red-500" : "bg-emerald-400"}`} />
-              <span>{loading ? "Syncing..." : "Live Pipeline"}</span>
+              <span className={`h-2 w-2 rounded-full ${isSyncing ? "bg-amber-400 animate-ping" : error ? "bg-red-500" : "bg-emerald-400"}`} />
+              <span className="font-medium text-[11px]">{isSyncing ? "Syncing Gmail & AI..." : "Live Pipeline Sync"}</span>
             </div>
-            <span className={loading ? "animate-spin" : ""}>↻</span>
+            <span className={`text-xs ${isSyncing ? "animate-spin text-amber-400" : ""}`}>↻</span>
           </button>
         </div>
       </aside>
 
       {/* ========================================================================= */}
-      {/* COLUMN 2: EMAIL LIST (Middle Pane) */}
+      {/* COLUMN 2: EMAIL LIST STREAM (Middle Pane) */}
       {/* ========================================================================= */}
-      <section className="flex w-[380px] shrink-0 flex-col border-r border-[#1e2025] bg-[#16171b]">
-        {/* Middle Header */}
-        <div className="flex items-center justify-between border-b border-[#1e2025] px-4 py-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[14px] font-semibold text-white">
-              {activeNav === "Priority" ? "Inbox - Priority" : activeNav}
+      <section className="flex w-[410px] shrink-0 flex-col border-r border-[#1a1c23] bg-[#0c0d11]">
+        {/* Header with Title & Sync status */}
+        <div className="flex items-center justify-between border-b border-[#1a1c23] px-4 py-3">
+          <div>
+            <h2 className="text-[14px] font-bold text-white flex items-center gap-2">
+              {activeCategory !== "ALL" ? categoryConfig[activeCategory]?.label || activeCategory : "Priority Inbox"}
+              <span className="text-[11px] font-normal text-[#717684]">({emails.length})</span>
             </h2>
           </div>
           <button
             onClick={() => fetchEmails(true)}
-            disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg border border-[#262830] bg-[#1a1c21] px-2.5 py-1 text-[11px] font-medium text-[#8e929b] hover:text-white hover:border-[#3a3d47] transition disabled:opacity-50"
-            title="Sync Latest Emails from Gmail"
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 rounded-lg border border-[#232733] bg-[#14171f] px-2.5 py-1 text-[11px] font-medium text-[#8e93a2] hover:text-white hover:border-[#373c4d] transition disabled:opacity-50"
+            title="Sync Latest Emails & AI Triage"
           >
-            <span className={loading ? "animate-spin" : ""}>↻</span>
-            <span>{loading ? "Syncing..." : "Sync"}</span>
+            <span className={isSyncing ? "animate-spin text-amber-400" : ""}>↻</span>
+            <span>{isSyncing ? "Syncing..." : "Sync"}</span>
           </button>
         </div>
 
-        {/* Category Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#1e2025] px-4 py-2 text-xs no-scrollbar">
-          {[
-            { key: "ALL", label: "All" },
-            { key: "LEO", label: "🦁 Leo" },
-            { key: "IEEE", label: "⚡ IEEE" },
-            { key: "UNI", label: "🎓 Uni" },
-            { key: "JOB", label: "💼 Jobs" },
-            { key: "SECURITY", label: "🔒 Security" },
-          ].map((pill) => (
-            <button
-              key={pill.key}
-              onClick={() => setActiveHub(pill.key)}
-              className={`rounded-full px-3 py-1 text-[11px] font-medium transition shrink-0 ${
-                activeHub === pill.key
-                  ? "bg-[#2563eb] text-white font-semibold shadow-sm"
-                  : "bg-[#1f2127] text-[#8e929b] hover:text-[#e4e5e7]"
-              }`}
-            >
-              {pill.label}
-            </button>
-          ))}
+        {/* TIME FRAMING SELECTOR PILLS */}
+        <div className="border-b border-[#1a1c23] bg-[#101217] px-3 py-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#636878]">
+              ⏰ Time Frame Filter
+            </span>
+            {stats && (
+              <span className="text-[10px] text-amber-400 font-mono">
+                {timeframe === "12h" ? `${stats.last_12h} while sleeping` : timeframe === "24h" ? `${stats.last_24h} today` : ""}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-5 gap-1 text-center">
+            {[
+              { key: "12h", label: "🌙 12h", title: "Last 12 hours (While sleeping)" },
+              { key: "24h", label: "☀️ 24h", title: "Last 24 hours (Today)" },
+              { key: "7d", label: "📅 7d", title: "Last 7 days (This week)" },
+              { key: "30d", label: "🗓️ 30d", title: "Last 30 days (This month)" },
+              { key: "all", label: "🌐 All", title: "All time" },
+            ].map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTimeframe(t.key)}
+                title={t.title}
+                className={`rounded-lg py-1 text-[11px] font-semibold transition ${
+                  timeframe === t.key
+                    ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                    : "bg-[#151820] text-[#717684] hover:bg-[#1a1e28] hover:text-white border border-transparent"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Email Cards Stream */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-1 py-2">
+        {/* Emails Stream List */}
+        <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1.5">
           {loading && emails.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[#787c87]">
-              <div className="mb-2 animate-spin text-lg">↻</div>
-              Loading &amp; syncing emails...
+            <div className="p-8 text-center text-xs text-[#717684]">
+              <div className="mb-2 animate-spin text-lg text-amber-400">↻</div>
+              Loading &amp; ranking emails...
             </div>
           ) : emails.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center text-xs text-[#787c87] gap-3">
-              <span>Inbox is empty. Click sync to ingest emails from Gmail.</span>
+            <div className="flex flex-col items-center justify-center p-8 text-center text-xs text-[#717684] gap-3">
+              <span className="text-2xl">📭</span>
+              <span>No emails found for this filter.</span>
               <button
-                onClick={() => fetchEmails(true)}
-                disabled={loading}
-                className="rounded-lg bg-[#2563eb] px-3.5 py-1.5 font-medium text-white shadow-sm hover:bg-blue-600 transition disabled:opacity-50"
+                onClick={() => {
+                  setTimeframe("all");
+                  setStatusFilter("all");
+                  setActiveCategory("ALL");
+                  setSearchQuery("");
+                }}
+                className="rounded-lg bg-[#1a1e28] px-3 py-1.5 text-xs text-white border border-[#2a2f3e] hover:bg-[#232838] transition"
               >
-                {loading ? "Syncing..." : "Sync from Gmail"}
+                Clear all filters
               </button>
             </div>
-          ) : filteredEmails.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[#787c87]">
-              No emails in this view.
-            </div>
           ) : (
-            filteredEmails.map((email) => {
+            emails.map((email) => {
               const isSelected = selectedEmail?.gmail_id === email.gmail_id;
-              const isStarred = !!starredIds[email.gmail_id];
-              const pColor = priorityColors[email.priority] || priorityColors.LOW;
+              const cat = categoryConfig[email.category] || categoryConfig.OTHER;
+              const pColor = priorityConfig[email.priority] || priorityConfig.LOW;
+              const deadlineInfo = formatRelativeDeadline(email.deadline);
 
               return (
                 <div
                   key={email.gmail_id}
                   onClick={() => setSelectedId(email.gmail_id)}
-                  className={`group relative flex cursor-pointer gap-3 rounded-xl p-3 transition ${
+                  className={`group relative flex cursor-pointer gap-2.5 rounded-xl p-3 transition border ${
                     isSelected
-                      ? "bg-[#23252c] text-white shadow-sm border border-[#2e313a]"
-                      : "hover:bg-[#1c1d22] text-[#c9cbd0]"
+                      ? "bg-[#181b24] text-white border-amber-500/40 shadow-md"
+                      : email.is_read
+                      ? "bg-[#101217]/80 text-[#8e93a2] border-transparent hover:bg-[#141720] hover:border-[#1e222d]"
+                      : "bg-[#13161f] text-[#d6d9e0] border-[#1e2330] hover:bg-[#171b26]"
                   }`}
                 >
-                  {/* Star and Status Dot */}
-                  <div className="flex flex-col items-center gap-2 pt-0.5">
+                  {/* Left Column: Read Dot / Replied / Star */}
+                  <div className="flex flex-col items-center justify-between pt-0.5 shrink-0">
+                    <div className="flex flex-col items-center gap-1.5">
+                      {/* Unread Glow Indicator */}
+                      {!email.is_read && (
+                        <span
+                          className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"
+                          title="Unread"
+                        />
+                      )}
+                      {email.is_replied && (
+                        <span className="text-[11px]" title="Replied">
+                          ↩️
+                        </span>
+                      )}
+                    </div>
+
                     <button
-                      onClick={(e) => toggleStar(e, email.gmail_id)}
-                      className={`text-xs transition ${
-                        isStarred ? "text-amber-400" : "text-[#4b4f5a] hover:text-[#8e929b]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUpdateStatus(email.gmail_id, { is_starred: !email.is_starred });
+                      }}
+                      className={`text-xs transition mt-2 ${
+                        email.is_starred ? "text-amber-400" : "text-[#3f4350] group-hover:text-[#717684] hover:text-amber-300"
                       }`}
+                      title={email.is_starred ? "Unstar" : "Star"}
                     >
-                      {isStarred ? "★" : "☆"}
+                      {email.is_starred ? "★" : "☆"}
                     </button>
                   </div>
 
-                  {/* Avatar */}
-                  <div className="relative shrink-0">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2a2d36] text-[11px] font-semibold text-[#e4e5e7] border border-[#373a44]">
+                  {/* Avatar with category icon */}
+                  <div className="relative shrink-0 pt-0.5">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1e222d] text-[11px] font-bold text-white border border-[#2b303f]">
                       {getInitials(email.sender)}
                     </div>
-                    {/* Small category dot indicator */}
                     <span
-                      className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#16171b] ${
-                        email.category === "LEO"
-                          ? "bg-amber-400"
-                          : email.category === "IEEE"
-                          ? "bg-sky-400"
-                          : email.category === "UNI"
-                          ? "bg-purple-400"
-                          : pColor.dot
-                      }`}
-                    />
+                      className={`absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] ${cat.bg} border border-[#101217]`}
+                    >
+                      {cat.icon}
+                    </span>
                   </div>
 
-                  {/* Text Content */}
+                  {/* Content summary */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between mb-0.5">
                       <div className="flex items-center gap-1.5 truncate">
-                        <span className="truncate font-semibold text-[12px] text-white">
+                        <span className={`truncate text-[12px] ${!email.is_read ? "font-bold text-white" : "font-medium text-[#c4c7d0]"}`}>
                           {getCleanSenderName(email.sender)}
                         </span>
-                        {email.category === "LEO" && (
-                          <span className="text-[10px] text-amber-400 font-bold">🦁</span>
-                        )}
                       </div>
-                      <span className="shrink-0 text-[10px] text-[#6b707c]">
+                      <span className="shrink-0 text-[10px] text-[#636878]">
                         {mounted ? formatShortDate(email.received_at) : ""}
                       </span>
                     </div>
 
-                    <div className="truncate text-[12px] font-medium text-[#dce0e8] mb-0.5">
+                    <div className={`truncate text-[12px] mb-0.5 ${!email.is_read ? "font-semibold text-white" : "font-normal text-[#a6abb8]"}`}>
                       {email.subject || "(No Subject)"}
                     </div>
 
-                    <div className="truncate text-[11px] text-[#787c87] leading-relaxed">
+                    <div className="truncate text-[11px] text-[#717684] leading-relaxed mb-2">
                       {email.summary || email.snippet}
                     </div>
 
-                    {/* Meta pill row */}
-                    <div className="mt-1.5 flex items-center justify-between text-[10px]">
-                      <div className="flex items-center gap-1.5">
+                    {/* Metadata Pill Row */}
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[10px]">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Category Badge */}
+                        <span className={`rounded-md px-1.5 py-0.5 font-semibold text-[9px] border ${cat.bg} ${cat.text} ${cat.border}`}>
+                          {cat.icon} {email.category}
+                        </span>
+
+                        {/* Action Badge */}
                         {email.action_required && (
-                          <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-semibold text-orange-400">
-                            Action
+                          <span className="rounded-md bg-amber-500/20 text-amber-300 px-1.5 py-0.5 font-bold border border-amber-500/30">
+                            ⚡ Action
                           </span>
                         )}
-                        <span className="text-[#555a64] font-medium uppercase text-[9px]">
-                          {email.category}
-                        </span>
+
+                        {/* Deadline Indicator */}
+                        {deadlineInfo && (
+                          <span
+                            className={`rounded-md px-1.5 py-0.5 font-semibold text-[9px] border ${
+                              deadlineInfo.urgent
+                                ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse-subtle"
+                                : "bg-[#1c202a] text-[#8e93a2] border-[#2b303f]"
+                            }`}
+                          >
+                            ⏰ {deadlineInfo.text}
+                          </span>
+                        )}
                       </div>
 
-                      {/* Score Badge */}
+                      {/* Attention Score Badge */}
                       <span
-                        className={`font-mono font-bold px-1.5 py-0.2 rounded text-[10px] ${
-                          email.attention_score >= 70
-                            ? "bg-amber-500/20 text-amber-300"
-                            : email.attention_score >= 40
-                            ? "bg-white/10 text-white"
-                            : "text-[#6b707c]"
+                        className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                          email.attention_score >= 80
+                            ? "bg-amber-500/25 text-amber-300 border border-amber-500/40"
+                            : email.attention_score >= 50
+                            ? "bg-[#1e2330] text-white border border-[#2c3244]"
+                            : "text-[#636878]"
                         }`}
                       >
                         {email.attention_score} pts
@@ -479,127 +693,259 @@ export default function Home() {
       </section>
 
       {/* ========================================================================= */}
-      {/* COLUMN 3: EMAIL READING & AI SUMMARY PANE (Right Column) */}
+      {/* COLUMN 3: EMAIL READER & AI DRAFT ASSISTANT PANE */}
       {/* ========================================================================= */}
-      <main className="flex flex-1 flex-col bg-[#121316] overflow-hidden">
+      <main className="flex flex-1 flex-col bg-[#0e1014] overflow-hidden">
         {selectedEmail ? (
           <>
-            {/* Action Bar Header */}
-            <header className="flex h-12 items-center justify-between border-b border-[#1e2025] px-6 text-[#787c87]">
-              <div className="flex items-center gap-3">
+            {/* Top Reader Action Bar */}
+            <header className="flex h-13 items-center justify-between border-b border-[#1a1c23] px-6 text-xs bg-[#101217]/50">
+              <div className="flex items-center gap-2">
+                {/* Read / Unread toggle */}
                 <button
-                  onClick={(e) => toggleStar(e, selectedEmail.gmail_id)}
-                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
-                    starredIds[selectedEmail.gmail_id]
-                      ? "bg-amber-500/10 text-amber-400"
-                      : "text-[#8e929b] hover:bg-[#1a1c21] hover:text-white"
+                  onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_read: !selectedEmail.is_read })}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition ${
+                    selectedEmail.is_read
+                      ? "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
+                      : "border-blue-500/40 bg-blue-500/15 text-blue-300 font-bold"
                   }`}
-                  title="Toggle Favorite"
                 >
-                  <span>{starredIds[selectedEmail.gmail_id] ? "★" : "☆"}</span>
-                  <span>{starredIds[selectedEmail.gmail_id] ? "Favorited" : "Favorite"}</span>
+                  <span>{selectedEmail.is_read ? "✉️ Mark Unread" : "👁️ Mark Read"}</span>
+                </button>
+
+                {/* Replied toggle */}
+                <button
+                  onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_replied: !selectedEmail.is_replied })}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition ${
+                    selectedEmail.is_replied
+                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-bold"
+                      : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
+                  }`}
+                >
+                  <span>↩️ {selectedEmail.is_replied ? "Replied" : "Mark as Replied"}</span>
+                </button>
+
+                {/* Star toggle */}
+                <button
+                  onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_starred: !selectedEmail.is_starred })}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition ${
+                    selectedEmail.is_starred
+                      ? "border-amber-500/40 bg-amber-500/15 text-amber-300 font-bold"
+                      : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
+                  }`}
+                >
+                  <span>{selectedEmail.is_starred ? "★ Favorited" : "☆ Favorite"}</span>
                 </button>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <a
                   href={`https://mail.google.com/mail/u/0/#inbox/${selectedEmail.gmail_id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 rounded-lg border border-[#2a2d36] bg-[#1a1c21] px-3 py-1.5 text-xs font-medium text-[#dce0e8] hover:border-[#3d424f] hover:text-white transition shadow-sm"
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-gradient-to-r from-amber-500/15 to-orange-500/15 px-3 py-1.5 font-semibold text-amber-300 hover:from-amber-500/25 hover:to-orange-500/25 transition shadow-sm"
                 >
                   <span>Open in Gmail</span>
-                  <span className="text-[10px] text-[#787c87]">↗</span>
+                  <span className="text-[10px]">↗</span>
                 </a>
               </div>
             </header>
 
-            {/* Email Body Scroll Container */}
-            <div className="flex-1 overflow-y-auto px-8 py-6 max-w-4xl">
-              {/* Subject Title with Priority Dot */}
-              <div className="mb-6 flex items-start gap-3">
-                <span
-                  className={`mt-2 h-2.5 w-2.5 shrink-0 rounded-full ${
-                    priorityColors[selectedEmail.priority]?.dot || "bg-zinc-500"
-                  }`}
-                />
-                <div className="flex-1">
-                  <h1 className="text-xl font-bold tracking-tight text-white leading-snug">
-                    {selectedEmail.subject || "(No Subject)"}
-                  </h1>
+            {/* Email View Scroll Area */}
+            <div className="flex-1 overflow-y-auto px-8 py-6 max-w-4xl space-y-6">
+              {/* Subject Title & Tags */}
+              <div className="border-b border-[#1a1c23] pb-5">
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`mt-2 h-3 w-3 shrink-0 rounded-full ${
+                      priorityConfig[selectedEmail.priority]?.dot || "bg-zinc-500"
+                    }`}
+                  />
+                  <div className="flex-1">
+                    <h1 className="text-xl font-bold tracking-tight text-white leading-snug">
+                      {selectedEmail.subject || "(No Subject)"}
+                    </h1>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="rounded-full bg-[#1e2129] px-2.5 py-0.5 text-[11px] font-semibold text-[#a8acb6] border border-[#2c303a]">
-                      {selectedEmail.category}
-                    </span>
-                    <span className="text-[#626775]">|</span>
-                    <span className="font-mono text-amber-400 font-semibold text-xs">
-                      Attention Score: {selectedEmail.attention_score}
-                    </span>
-                    {selectedEmail.action_required && (
-                      <span className="rounded bg-orange-500/15 px-2 py-0.5 text-[10px] font-bold text-orange-400 border border-orange-500/30">
-                        ⚡ Action Required
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                      {/* Category Tag */}
+                      <span className={`rounded-full px-3 py-0.5 font-semibold text-[11px] border ${categoryConfig[selectedEmail.category]?.bg} ${categoryConfig[selectedEmail.category]?.text} ${categoryConfig[selectedEmail.category]?.border}`}>
+                        {categoryConfig[selectedEmail.category]?.icon} {selectedEmail.category}
                       </span>
-                    )}
+
+                      {/* Priority Tag */}
+                      <span className={`rounded-full px-2.5 py-0.5 font-bold text-[10px] border ${priorityConfig[selectedEmail.priority]?.badge}`}>
+                        {selectedEmail.priority} Priority
+                      </span>
+
+                      {/* Attention Score */}
+                      <span className="rounded-full bg-[#1a1e28] px-2.5 py-0.5 font-mono text-amber-400 font-bold text-[11px] border border-[#2b303f]">
+                        Score: {selectedEmail.attention_score} pts
+                      </span>
+
+                      {/* Action Required */}
+                      {selectedEmail.action_required && (
+                        <span className="rounded-full bg-amber-500/20 text-amber-300 px-2.5 py-0.5 font-bold text-[10px] border border-amber-500/40">
+                          ⚡ Action Required
+                        </span>
+                      )}
+
+                      {/* Status Badges */}
+                      {selectedEmail.is_replied && (
+                        <span className="rounded-full bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 font-bold text-[10px] border border-emerald-500/40">
+                          ↩️ Replied
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* AI Executive Summary Card (Matches Image Warm Amber/Brown Container) */}
+              {/* AI Executive Summary Card */}
               {selectedEmail.summary && (
-                <div className="mb-6 rounded-2xl border border-[#3b2a1d] bg-[#241a13] p-4 shadow-sm">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#d97706]">
-                    <span>✨</span>
-                    <span>Summary of this email</span>
+                <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a12] via-[#1a1410] to-[#120f0d] p-4 shadow-lg">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                      <span>✨</span>
+                      <span>AI Executive Summary (Ollama Triage)</span>
+                    </div>
+                    {selectedEmail.deadline && (
+                      <div className="inline-flex items-center gap-1.5 rounded-md bg-[#382618] px-2.5 py-1 text-xs font-bold text-amber-300 border border-amber-500/40">
+                        <span>⏰ Deadline:</span>
+                        <span>{new Date(selectedEmail.deadline).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                      </div>
+                    )}
                   </div>
                   <p className="text-[13px] text-[#fef3c7] leading-relaxed font-normal">
                     {selectedEmail.summary}
                   </p>
-                  {selectedEmail.deadline && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-[#372417] px-2.5 py-1 text-xs font-semibold text-amber-300">
-                      <span>⏰ Deadline:</span>
-                      <span>{selectedEmail.deadline}</span>
-                    </div>
-                  )}
                 </div>
               )}
 
-              {/* Sender Details Header */}
-              <div className="mb-6 flex items-start justify-between border-b border-[#1e2025] pb-5">
+              {/* Sender & Recipient Information */}
+              <div className="flex items-start justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#272a33] text-sm font-semibold text-white border border-[#373b47]">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1e222d] text-sm font-bold text-white border border-[#2c3244]">
                     {getInitials(selectedEmail.sender)}
                   </div>
                   <div>
                     <div className="font-semibold text-white text-[13px]">
                       {getCleanSenderName(selectedEmail.sender)}
                     </div>
-                    <div className="text-xs text-[#787c87]">
-                      {getSenderEmail(selectedEmail.sender)} <span className="text-[#4e535e]">→ to me</span>
+                    <div className="text-xs text-[#717684]">
+                      {getSenderEmail(selectedEmail.sender)} <span className="text-[#4b4f5c]">→ {selectedEmail.recipient || "me"}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="text-right text-xs text-[#6b707c]">
-                  {new Date(selectedEmail.received_at).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                <div className="text-right text-xs text-[#717684]">
+                  <div>
+                    {new Date(selectedEmail.received_at).toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </div>
+                  <div className="text-[11px] text-[#555a66] mt-0.5">
+                    {new Date(selectedEmail.received_at).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
                 </div>
               </div>
 
-              {/* Email Content Snippet & Body */}
-              <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans">
-                {selectedEmail.snippet}
+              {/* Email Body Content */}
+              <div className="rounded-xl border border-[#1a1c23] bg-[#101217] p-5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#555a66] mb-3">Email Message</h3>
+                <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans">
+                  {selectedEmail.body || selectedEmail.snippet}
+                </div>
+              </div>
+
+              {/* AI Quick Reply Drafting Assistant */}
+              <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-[#101726] via-[#0d121e] to-[#0a0d14] p-5 shadow-lg">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400 font-bold text-sm">🤖</span>
+                    <h3 className="text-xs font-bold text-white tracking-wide">
+                      AI Reply Assistant (Powered by Ollama)
+                    </h3>
+                  </div>
+
+                  {/* Tone selector */}
+                  <div className="flex items-center gap-1">
+                    {[
+                      { key: "professional", label: "Professional" },
+                      { key: "confirm", label: "Quick Confirm" },
+                      { key: "decline", label: "Polite Decline" },
+                      { key: "inquire", label: "Request Details" },
+                    ].map((t) => (
+                      <button
+                        key={t.key}
+                        onClick={() => setDraftTone(t.key)}
+                        className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition ${
+                          draftTone === t.key
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "bg-[#181d2a] text-[#788199] hover:text-white"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Draft Output / Input */}
+                <div className="space-y-3">
+                  <textarea
+                    rows={4}
+                    placeholder="Click 'Draft AI Reply with Ollama' below to generate a contextual response..."
+                    value={draftContent}
+                    onChange={(e) => setDraftContent(e.target.value)}
+                    className="w-full rounded-xl border border-[#232d42] bg-[#0c1018] p-3 text-xs text-white placeholder-[#505a74] focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 leading-relaxed transition"
+                  />
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={handleGenerateAiReply}
+                      disabled={isDrafting}
+                      className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md hover:from-blue-500 hover:to-indigo-500 transition disabled:opacity-50 cursor-pointer"
+                    >
+                      <span className={isDrafting ? "animate-spin" : ""}>✨</span>
+                      <span>{isDrafting ? "Generating Draft..." : "Draft AI Reply with Ollama"}</span>
+                    </button>
+
+                    {draftContent && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleCopyDraft}
+                          className="flex items-center gap-1.5 rounded-lg border border-[#29344d] bg-[#141b2a] px-3 py-1.5 text-xs font-semibold text-blue-300 hover:bg-[#1a2337] transition"
+                        >
+                          <span>{copiedDraft ? "✓ Copied!" : "📋 Copy Draft"}</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            handleUpdateStatus(selectedEmail.gmail_id, { is_replied: true, draft_reply: draftContent });
+                            window.open(`https://mail.google.com/mail/u/0/#inbox/${selectedEmail.gmail_id}`, "_blank");
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-500 transition"
+                        >
+                          <span>Send &amp; Mark Replied</span>
+                          <span className="text-[10px]">↗</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center text-[#555a64]">
-            <span className="text-3xl mb-2">✉️</span>
-            <p className="text-xs">Select an email to view details</p>
+          <div className="flex flex-1 flex-col items-center justify-center text-[#555a66] gap-2">
+            <span className="text-4xl">✉️</span>
+            <p className="text-xs font-medium">Select an email from the left to view details and AI triage</p>
           </div>
         )}
       </main>

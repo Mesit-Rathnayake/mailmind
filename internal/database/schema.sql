@@ -33,8 +33,26 @@ CREATE TABLE IF NOT EXISTS emails (
     attention_score DOUBLE PRECISION,
     scored_at TIMESTAMPTZ,
 
+    -- Status & Interaction Tracking
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    is_replied BOOLEAN NOT NULL DEFAULT FALSE,
+    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+    is_starred BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    replied_at TIMESTAMPTZ,
+    draft_reply TEXT,
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migration for existing tables
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS is_replied BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS is_starred BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ;
+ALTER TABLE emails ADD COLUMN IF NOT EXISTS draft_reply TEXT;
 
 -- Indexes for fast querying & worker queue processing
 CREATE INDEX IF NOT EXISTS idx_emails_ai_unprocessed 
@@ -43,6 +61,12 @@ CREATE INDEX IF NOT EXISTS idx_emails_ai_unprocessed
 
 CREATE INDEX IF NOT EXISTS idx_emails_attention_score 
     ON emails (attention_score DESC NULLS LAST, received_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_emails_received_at
+    ON emails (received_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_emails_status
+    ON emails (is_read, is_replied, is_archived, is_starred);
 
 -- 2. User Preferences Table
 CREATE TABLE IF NOT EXISTS user_preferences (

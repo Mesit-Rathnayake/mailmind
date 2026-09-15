@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/Mesit-Rathnayake/mailmind/internal/ai"
@@ -15,13 +16,14 @@ type Worker struct {
 	db       *database.DB
 	analyzer ai.Analyzer
 	interval time.Duration
+	syncMu   sync.Mutex
 }
 
 func NewWorker(db *database.DB, interval time.Duration) (*Worker, error) {
 	ctx := context.Background()
-	analyzer, err := ai.NewGeminiAnalyzer(ctx)
+	analyzer, err := ai.NewAnalyzerFromEnv(ctx)
 	if err != nil {
-		log.Printf("Warning: Failed to create Gemini analyzer for worker: %v", err)
+		log.Printf("Warning: Failed to create AI analyzer for worker: %v", err)
 	}
 
 	return &Worker{
@@ -56,6 +58,9 @@ func (w *Worker) Start(ctx context.Context) {
 }
 
 func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
+	w.syncMu.Lock()
+	defer w.syncMu.Unlock()
+
 	log.Println("[Worker] Running scheduled email sync & triage...")
 
 	client, err := gmail.NewClientSafe(ctx)
@@ -87,12 +92,12 @@ func (w *Worker) SyncOnce(ctx context.Context) (int, error) {
 		log.Printf("[Worker] Failed to load preferences: %v", err)
 	}
 
-	// 3. Process unprocessed emails with Gemini
+	// 3. Process unprocessed emails with the configured AI provider
 	if w.analyzer == nil {
-		w.analyzer, err = ai.NewGeminiAnalyzer(ctx)
+		w.analyzer, err = ai.NewAnalyzerFromEnv(ctx)
 		if err != nil {
-			log.Printf("[Worker] Gemini analyzer unavailable: %v", err)
-			return savedCount, fmt.Errorf("gemini analyzer unavailable: %w", err)
+			log.Printf("[Worker] AI analyzer unavailable: %v", err)
+			return savedCount, fmt.Errorf("ai analyzer unavailable: %w", err)
 		}
 	}
 

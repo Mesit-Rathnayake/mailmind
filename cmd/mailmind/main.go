@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Mesit-Rathnayake/mailmind/internal/ai"
@@ -62,15 +63,15 @@ func main() {
 	}
 
 	// -------------------------
-	// Gemini
+	// AI Analyzer
 	// -------------------------
 
-	analyzer, err := ai.NewGeminiAnalyzer(ctx)
+	analyzer, err := ai.NewAnalyzerFromEnv(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create Gemini analyzer: %v", err)
+		log.Fatalf("Failed to create AI analyzer: %v", err)
 	}
 
-	log.Println("Gemini analyzer initialized!")
+	log.Printf("AI analyzer initialized for provider: %s", strings.TrimSpace(strings.ToLower(os.Getenv("AI_PROVIDER"))))
 
 	// -------------------------
 	// User Preferences

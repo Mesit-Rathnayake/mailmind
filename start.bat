@@ -8,13 +8,35 @@ echo.
 cd /d "%~dp0"
 
 echo [1/3] Starting Go Backend API Server (Port 8080)...
-start "MailMind Backend" /min cmd /c "go run ./cmd/server"
+start "MailMind Backend" /min cmd /c "cd /d ""%~dp0"" && go run ./cmd/server"
 
 echo [2/3] Starting Next.js Web Client (Port 3001)...
-start "MailMind Frontend" /min cmd /c "cd frontend && npm run dev"
+start "MailMind Frontend" /min cmd /c "cd /d ""%~dp0frontend"" && npm run dev"
 
 echo [3/3] Waiting for servers to initialize...
-timeout /t 3 /nobreak >nul
+set "BACKEND_READY="
+set "FRONTEND_READY="
+
+for /l %%i in (1,1,30) do (
+	if not defined BACKEND_READY (
+		powershell -NoProfile -Command "try { $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8080/health' -TimeoutSec 1; if ($response.StatusCode -eq 200) { exit 0 } } catch {}; exit 1" >nul 2>&1
+		if not errorlevel 1 set "BACKEND_READY=1"
+	)
+	if not defined FRONTEND_READY (
+		powershell -NoProfile -Command "try { $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3001' -TimeoutSec 1; if ($response.StatusCode -eq 200) { exit 0 } } catch {}; exit 1" >nul 2>&1
+		if not errorlevel 1 set "FRONTEND_READY=1"
+	)
+	if defined BACKEND_READY if defined FRONTEND_READY goto services_ready
+	timeout /t 1 /nobreak >nul
+)
+
+echo.
+if not defined BACKEND_READY echo Backend did not become ready at http://localhost:8080
+if not defined FRONTEND_READY echo Frontend did not become ready at http://localhost:3001
+if not defined BACKEND_READY goto startup_failed
+if not defined FRONTEND_READY goto startup_failed
+
+:services_ready
 
 echo.
 echo ========================================================
@@ -26,6 +48,10 @@ echo.
 echo Opening MailMind in your browser...
 start http://localhost:3001
 
+exit /b 0
+
+:startup_failed
 echo.
-echo Press any key to close this launcher window (servers remain running in background).
-pause >nul
+echo MailMind could not start completely. Check the backend and frontend windows for details.
+pause
+exit /b 1
