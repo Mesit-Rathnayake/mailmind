@@ -277,9 +277,6 @@ export default function Home() {
             M
           </div>
           <span className="font-bold text-[14px] tracking-tight text-white">MailMind</span>
-          <span className="rounded bg-[#1e222d] px-1.5 py-0.5 text-[9px] font-mono text-amber-400 font-semibold border border-[#2b303f]">
-            AI Triage
-          </span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
@@ -434,7 +431,7 @@ export default function Home() {
         >
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${isSyncing ? "bg-amber-400 animate-ping" : error ? "bg-red-500" : "bg-emerald-400"}`} />
-            <span className="font-medium text-[11px]">{isSyncing ? "Syncing Gmail & AI..." : "Live Pipeline Sync"}</span>
+            <span className="font-medium text-[11px]">{isSyncing ? "Syncing..." : "Sync Inbox"}</span>
           </div>
           <span className={`text-xs ${isSyncing ? "animate-spin text-amber-400" : ""}`}>↻</span>
         </button>
@@ -823,13 +820,13 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* AI Executive Summary Card */}
+              {/* Summary Card */}
               {selectedEmail.summary && (
                 <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a12] via-[#1a1410] to-[#120f0d] p-4 sm:p-5 shadow-lg">
                   <div className="mb-2 flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
                       <span>✨</span>
-                      <span>AI Executive Summary (Ollama Triage)</span>
+                      <span>Summary</span>
                     </div>
                     {selectedEmail.deadline && (
                       <div className="inline-flex items-center gap-1.5 rounded-md bg-[#382618] px-2.5 py-1 text-xs font-bold text-amber-300 border border-amber-500/40">
@@ -919,7 +916,7 @@ export default function Home() {
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center text-[#555a66] gap-2 p-4 text-center">
             <span className="text-4xl">✉️</span>
-            <p className="text-xs font-medium">Select an email from the left to view details and AI triage</p>
+            <p className="text-xs font-medium">Select an email from the list to view details</p>
           </div>
         )}
       </main>
