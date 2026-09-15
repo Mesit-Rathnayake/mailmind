@@ -80,7 +80,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := s.worker.SyncOnce(r.Context())
+	count, err := s.worker.SyncOnce(context.Background())
 	if err != nil {
 		log.Printf("Sync trigger error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
