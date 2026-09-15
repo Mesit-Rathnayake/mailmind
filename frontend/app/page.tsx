@@ -163,7 +163,7 @@ export default function Home() {
     if (!triggerSync && cacheRef.current[cacheKey]) {
       setEmails(cacheRef.current[cacheKey]);
       setLoading(false);
-    } else if (emails.length === 0) {
+    } else {
       setLoading(true);
     }
 
@@ -200,6 +200,8 @@ export default function Home() {
         if (!selectedId || !data.some((e) => e.gmail_id === selectedId)) {
           setSelectedId(data[0].gmail_id);
         }
+      } else {
+        setSelectedId(null);
       }
 
       fetchStats();
@@ -215,10 +217,6 @@ export default function Home() {
   useEffect(() => {
     fetchEmails(false);
   }, [timeframe, statusFilter, activeCategory]);
-
-  useEffect(() => {
-    fetchEmails(true);
-  }, []);
 
   const handleUpdateStatus = async (gmailId: string, updates: Partial<RankedEmail>) => {
     setEmails((prev) =>

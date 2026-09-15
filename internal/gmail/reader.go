@@ -169,6 +169,8 @@ func FetchLatestEmailsWithCache(ctx context.Context, client *http.Client, count 
 	user := "me"
 
 	list, err := service.Users.Messages.List(user).
+		LabelIds("INBOX").
+		Q("in:inbox -in:sent -in:drafts -in:trash").
 		MaxResults(count).
 		Do()
 	if err != nil {
@@ -188,6 +190,26 @@ func FetchLatestEmailsWithCache(ctx context.Context, client *http.Client, count 
 			Format("full").
 			Do()
 		if err != nil {
+			continue
+		}
+
+		// Verify it's not a sent message
+		isSent := false
+		isRead := true
+		isStarred := false
+		for _, label := range msg.LabelIds {
+			if label == "SENT" || label == "DRAFT" || label == "TRASH" {
+				isSent = true
+				break
+			}
+			if label == "UNREAD" {
+				isRead = false
+			}
+			if label == "STARRED" {
+				isStarred = true
+			}
+		}
+		if isSent {
 			continue
 		}
 
@@ -215,17 +237,12 @@ func FetchLatestEmailsWithCache(ctx context.Context, client *http.Client, count 
 			)
 		}
 
-		parsedDate := parseEmailDate(date)
-
-		isRead := true
-		isStarred := false
-		for _, label := range msg.LabelIds {
-			if label == "UNREAD" {
-				isRead = false
-			}
-			if label == "STARRED" {
-				isStarred = true
-			}
+		// Use Gmail InternalDate (milliseconds epoch) for exact received timestamp
+		var parsedDate time.Time
+		if msg.InternalDate > 0 {
+			parsedDate = time.UnixMilli(msg.InternalDate)
+		} else {
+			parsedDate = parseEmailDate(date)
 		}
 
 		emails = append(emails, email.Email{
