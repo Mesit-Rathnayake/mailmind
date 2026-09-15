@@ -125,12 +125,6 @@ export default function Home() {
   const [activeCategory, setActiveCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // AI Reply Draft State
-  const [draftTone, setDraftTone] = useState<string>("professional");
-  const [draftContent, setDraftContent] = useState<string>("");
-  const [isDrafting, setIsDrafting] = useState(false);
-  const [copiedDraft, setCopiedDraft] = useState(false);
-
   // App UI State
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -184,10 +178,8 @@ export default function Home() {
       setEmails(data || []);
 
       if (data && data.length > 0) {
-        // If current selectedId is not in data, pick the first
         if (!selectedId || !data.some((e) => e.gmail_id === selectedId)) {
           setSelectedId(data[0].gmail_id);
-          setDraftContent(data[0].draft_reply || "");
         }
       }
 
@@ -205,14 +197,11 @@ export default function Home() {
     fetchEmails(false);
   }, [timeframe, statusFilter, activeCategory]);
 
-  // Initial load with background sync
   useEffect(() => {
     fetchEmails(true);
   }, []);
 
-  // Update status (is_read, is_replied, is_starred, is_archived)
   const handleUpdateStatus = async (gmailId: string, updates: Partial<RankedEmail>) => {
-    // Optimistic UI update
     setEmails((prev) =>
       prev.map((e) => (e.gmail_id === gmailId ? { ...e, ...updates } : e))
     );
@@ -234,67 +223,11 @@ export default function Home() {
 
   const selectedEmail = emails.find((e) => e.gmail_id === selectedId) || emails[0] || null;
 
-  // Whenever selectedEmail changes, update draft input content and auto-mark as read
   useEffect(() => {
-    if (selectedEmail) {
-      setDraftContent(selectedEmail.draft_reply || "");
-      if (!selectedEmail.is_read) {
-        handleUpdateStatus(selectedEmail.gmail_id, { is_read: true });
-      }
+    if (selectedEmail && !selectedEmail.is_read) {
+      handleUpdateStatus(selectedEmail.gmail_id, { is_read: true });
     }
   }, [selectedId]);
-
-  // AI Reply Generation Handler
-  const handleGenerateAiReply = async () => {
-    if (!selectedEmail) return;
-    setIsDrafting(true);
-    setCopiedDraft(false);
-
-    try {
-      const tonePromptMap: Record<string, string> = {
-        professional: "professional, respectful, clear, and action-oriented",
-        confirm: "brief, polite confirmation and acknowledgment",
-        decline: "very polite, respectful decline with appreciation",
-        inquire: "courteous request for clarification and next steps",
-      };
-
-      const res = await fetch(`${API_BASE_URL}/api/emails/generate-reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gmail_id: selectedEmail.gmail_id,
-          subject: selectedEmail.subject,
-          sender: selectedEmail.sender,
-          body: selectedEmail.body || selectedEmail.snippet,
-          tone: tonePromptMap[draftTone] || "professional",
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error("Failed to generate AI reply");
-      }
-
-      const data = await res.json();
-      if (data.draft) {
-        setDraftContent(data.draft);
-        setEmails((prev) =>
-          prev.map((e) => (e.gmail_id === selectedEmail.gmail_id ? { ...e, draft_reply: data.draft } : e))
-        );
-      }
-    } catch (err: any) {
-      console.error("Error generating draft:", err);
-      alert("Failed to generate draft: " + err.message);
-    } finally {
-      setIsDrafting(false);
-    }
-  };
-
-  const handleCopyDraft = () => {
-    if (!draftContent) return;
-    navigator.clipboard.writeText(draftContent);
-    setCopiedDraft(true);
-    setTimeout(() => setCopiedDraft(false), 2500);
-  };
 
   // Keyboard shortcut listener for Search (⌘K / Ctrl+K)
   useEffect(() => {
@@ -863,81 +796,32 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* AI Quick Reply Drafting Assistant */}
-              <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-[#101726] via-[#0d121e] to-[#0a0d14] p-5 shadow-lg">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-blue-400 font-bold text-sm">🤖</span>
-                    <h3 className="text-xs font-bold text-white tracking-wide">
-                      AI Reply Assistant (Powered by Ollama)
-                    </h3>
-                  </div>
-
-                  {/* Tone selector */}
-                  <div className="flex items-center gap-1">
-                    {[
-                      { key: "professional", label: "Professional" },
-                      { key: "confirm", label: "Quick Confirm" },
-                      { key: "decline", label: "Polite Decline" },
-                      { key: "inquire", label: "Request Details" },
-                    ].map((t) => (
-                      <button
-                        key={t.key}
-                        onClick={() => setDraftTone(t.key)}
-                        className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition ${
-                          draftTone === t.key
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : "bg-[#181d2a] text-[#788199] hover:text-white"
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
+              {/* Footer Quick Actions */}
+              <div className="flex items-center justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4">
+                <div className="flex items-center gap-2 text-xs text-[#717684]">
+                  <span>💡 Direct reply &amp; smart compose are available directly in Gmail.</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_replied: !selectedEmail.is_replied })}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                      selectedEmail.is_replied
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-bold"
+                        : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
+                    }`}
+                  >
+                    <span>↩️ {selectedEmail.is_replied ? "Marked as Replied" : "Mark as Replied"}</span>
+                  </button>
 
-                {/* Draft Output / Input */}
-                <div className="space-y-3">
-                  <textarea
-                    rows={4}
-                    placeholder="Click 'Draft AI Reply with Ollama' below to generate a contextual response..."
-                    value={draftContent}
-                    onChange={(e) => setDraftContent(e.target.value)}
-                    className="w-full rounded-xl border border-[#232d42] bg-[#0c1018] p-3 text-xs text-white placeholder-[#505a74] focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 leading-relaxed transition"
-                  />
-
-                  <div className="flex items-center justify-between">
-                    <button
-                      onClick={handleGenerateAiReply}
-                      disabled={isDrafting}
-                      className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md hover:from-blue-500 hover:to-indigo-500 transition disabled:opacity-50 cursor-pointer"
-                    >
-                      <span className={isDrafting ? "animate-spin" : ""}>✨</span>
-                      <span>{isDrafting ? "Generating Draft..." : "Draft AI Reply with Ollama"}</span>
-                    </button>
-
-                    {draftContent && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleCopyDraft}
-                          className="flex items-center gap-1.5 rounded-lg border border-[#29344d] bg-[#141b2a] px-3 py-1.5 text-xs font-semibold text-blue-300 hover:bg-[#1a2337] transition"
-                        >
-                          <span>{copiedDraft ? "✓ Copied!" : "📋 Copy Draft"}</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            handleUpdateStatus(selectedEmail.gmail_id, { is_replied: true, draft_reply: draftContent });
-                            window.open(`https://mail.google.com/mail/u/0/#inbox/${selectedEmail.gmail_id}`, "_blank");
-                          }}
-                          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-500 transition"
-                        >
-                          <span>Send &amp; Mark Replied</span>
-                          <span className="text-[10px]">↗</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <a
+                    href={`https://mail.google.com/mail/u/0/#inbox/${selectedEmail.gmail_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-1.5 text-xs font-bold text-white shadow hover:from-amber-600 hover:to-orange-600 transition"
+                  >
+                    <span>Reply in Gmail</span>
+                    <span className="text-[10px]">↗</span>
+                  </a>
                 </div>
               </div>
             </div>
