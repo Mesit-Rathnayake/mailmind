@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MailMind | AI Email Triage & Priority Assistant",
+  title: "MailMind",
   description: "Intelligent email triage, priority scoring, time framing, and local AI assistance powered by Ollama.",
   icons: {
     icon: "/favicon.ico",
