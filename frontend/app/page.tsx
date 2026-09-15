@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useTransition } from "react";
+import React, { useEffect, useState, useRef } from "react";
 
 type Priority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
@@ -119,14 +119,18 @@ export default function Home() {
   const [stats, setStats] = useState<EmailStats | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Client-side In-Memory SWR Cache for Instant (0ms) Tab Transitions
-  const cacheRef = React.useRef<Record<string, RankedEmail[]>>({});
+  // Client-side In-Memory SWR Cache
+  const cacheRef = useRef<Record<string, RankedEmail[]>>({});
 
   // Filters state
   const [timeframe, setTimeframe] = useState<string>("all"); // "12h", "24h", "7d", "30d", "all"
   const [statusFilter, setStatusFilter] = useState<string>("all"); // "all", "unread", "read", "replied", "starred", "action"
   const [activeCategory, setActiveCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Responsive & Mobile State
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "reader">("list"); // for screens < md
 
   // App UI State
   const [loading, setLoading] = useState(true);
@@ -217,12 +221,10 @@ export default function Home() {
   }, []);
 
   const handleUpdateStatus = async (gmailId: string, updates: Partial<RankedEmail>) => {
-    // Optimistic UI state update
     setEmails((prev) =>
       prev.map((e) => (e.gmail_id === gmailId ? { ...e, ...updates } : e))
     );
 
-    // Also update all in-memory cached views
     for (const key in cacheRef.current) {
       cacheRef.current[key] = cacheRef.current[key].map((e) =>
         e.gmail_id === gmailId ? { ...e, ...updates } : e
@@ -265,194 +267,244 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#090a0d] font-sans text-[#e2e4e9] antialiased selection:bg-[#32363f]">
-      {/* ========================================================================= */}
-      {/* COLUMN 1: LEFT SIDEBAR NAVIGATION */}
-      {/* ========================================================================= */}
-      <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#1a1c23] bg-[#0e1014] p-3 text-xs select-none">
-        {/* Brand & macOS Window Controls */}
-        <div className="mb-4 flex items-center justify-between px-2 pt-1">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 font-black text-white shadow-md text-sm">
-              M
-            </div>
-            <span className="font-bold text-[14px] tracking-tight text-white">MailMind</span>
-            <span className="rounded bg-[#1e222d] px-1.5 py-0.5 text-[9px] font-mono text-amber-400 font-semibold border border-[#2b303f]">
-              AI Triage
-            </span>
+  // Shared Sidebar Component Content
+  const renderSidebarContent = () => (
+    <div className="flex h-full flex-col p-3 text-xs select-none">
+      {/* Brand & Window Controls */}
+      <div className="mb-4 flex items-center justify-between px-2 pt-1">
+        <div className="flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 font-black text-white shadow-md text-sm">
+            M
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
-            <div className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
-            <div className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
-          </div>
+          <span className="font-bold text-[14px] tracking-tight text-white">MailMind</span>
+          <span className="rounded bg-[#1e222d] px-1.5 py-0.5 text-[9px] font-mono text-amber-400 font-semibold border border-[#2b303f]">
+            AI Triage
+          </span>
         </div>
+        <div className="flex items-center gap-1.5">
+          <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+          <div className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+          <div className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+        </div>
+      </div>
 
-        {/* User Card */}
-        <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#1e222d] bg-[#14171f]/80 p-2 shadow-sm">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-amber-600 to-orange-500 font-bold text-white text-xs shadow-inner">
-            MR
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-semibold text-white text-[12px]">Mesith Rathnayake</div>
-            <div className="truncate text-[10px] text-[#717684]">
-              {emails.find((e) => e.recipient)?.recipient || "Gmail Sync Active"}
-            </div>
+      {/* User Card */}
+      <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#1e222d] bg-[#14171f]/80 p-2 shadow-sm">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-amber-600 to-orange-500 font-bold text-white text-xs shadow-inner">
+          MR
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-white text-[12px]">Mesith Rathnayake</div>
+          <div className="truncate text-[10px] text-[#717684]">
+            {emails.find((e) => e.recipient)?.recipient || "Gmail Sync Active"}
           </div>
         </div>
+      </div>
 
-        {/* Search Input */}
-        <div className="relative mb-4">
-          <span className="absolute left-2.5 top-2 text-[11px] text-[#717684]">🔍</span>
-          <input
-            id="search-input"
-            type="text"
-            placeholder="Search emails (⌘K)..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") fetchEmails(false);
-            }}
-            className="h-8 w-full rounded-lg border border-[#1e222d] bg-[#14171f] pl-7 pr-7 text-xs text-white placeholder-[#5a5f6e] focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => {
-                setSearchQuery("");
-                setTimeout(() => fetchEmails(false), 0);
-              }}
-              className="absolute right-2 top-2 text-[11px] text-[#717684] hover:text-white"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* Status Navigation Sections */}
-        <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
-          Views & Status
-        </div>
-        <div className="space-y-0.5">
-          {[
-            { key: "all", name: "All Priority", icon: "⭐", count: stats?.total },
-            { key: "unread", name: "Unread / Unopened", icon: "🔵", count: stats?.unread, badgeColor: "bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30" },
-            { key: "read", name: "Read / Viewed", icon: "👁️", count: stats?.read },
-            { key: "action", name: "Action Required", icon: "⚡", count: stats?.action_required, badgeColor: "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" },
-            { key: "replied", name: "Replied", icon: "↩️", count: stats?.replied },
-            { key: "starred", name: "Favorites", icon: "📌", count: stats?.starred },
-          ].map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setStatusFilter(item.key)}
-              className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition ${
-                statusFilter === item.key
-                  ? "bg-[#1c202a] font-semibold text-white shadow-sm border border-[#2b303f]"
-                  : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-[12px]">{item.icon}</span>
-                <span className="text-[12px]">{item.name}</span>
-              </div>
-              {item.count !== undefined && item.count > 0 && (
-                <span
-                  className={`rounded-full px-2 py-0.2 text-[10px] ${
-                    item.badgeColor || (statusFilter === item.key ? "bg-[#2c303f] text-white" : "text-[#717684]")
-                  }`}
-                >
-                  {item.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Hubs / Categories */}
-        <div className="mt-4 mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
-          <span>Category Hubs</span>
-          <span className="text-xs">▾</span>
-        </div>
-        <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar pr-1">
+      {/* Search Input */}
+      <div className="relative mb-4">
+        <span className="absolute left-2.5 top-2 text-[11px] text-[#717684]">🔍</span>
+        <input
+          id="search-input"
+          type="text"
+          placeholder="Search emails (⌘K)..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") fetchEmails(false);
+          }}
+          className="h-8 w-full rounded-lg border border-[#1e222d] bg-[#14171f] pl-7 pr-7 text-xs text-white placeholder-[#5a5f6e] focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition"
+        />
+        {searchQuery && (
           <button
-            onClick={() => setActiveCategory("ALL")}
-            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
-              activeCategory === "ALL"
-                ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
+            onClick={() => {
+              setSearchQuery("");
+              setTimeout(() => fetchEmails(false), 0);
+            }}
+            className="absolute right-2 top-2 text-[11px] text-[#717684] hover:text-white"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Views & Status */}
+      <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
+        Views & Status
+      </div>
+      <div className="space-y-0.5">
+        {[
+          { key: "all", name: "All Priority", icon: "⭐", count: stats?.total },
+          { key: "unread", name: "Unread / Unopened", icon: "🔵", count: stats?.unread, badgeColor: "bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30" },
+          { key: "read", name: "Read / Viewed", icon: "👁️", count: stats?.read },
+          { key: "action", name: "Action Required", icon: "⚡", count: stats?.action_required, badgeColor: "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" },
+          { key: "replied", name: "Replied", icon: "↩️", count: stats?.replied },
+          { key: "starred", name: "Favorites", icon: "📌", count: stats?.starred },
+        ].map((item) => (
+          <button
+            key={item.key}
+            onClick={() => {
+              setStatusFilter(item.key);
+              setIsMobileSidebarOpen(false);
+            }}
+            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition ${
+              statusFilter === item.key
+                ? "bg-[#1c202a] font-semibold text-white shadow-sm border border-[#2b303f]"
                 : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
             }`}
           >
             <div className="flex items-center gap-2">
-              <span>🌐</span>
-              <span>All Categories</span>
+              <span className="text-[12px]">{item.icon}</span>
+              <span className="text-[12px]">{item.name}</span>
             </div>
-            {stats?.total !== undefined && (
-              <span className="text-[10px] text-[#717684]">{stats.total}</span>
-            )}
-          </button>
-
-          {Object.entries(categoryConfig).map(([key, config]) => {
-            const count = stats?.categories?.[key] || 0;
-            return (
-              <button
-                key={key}
-                onClick={() => setActiveCategory(key)}
-                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
-                  activeCategory === key
-                    ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
-                    : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
+            {item.count !== undefined && item.count > 0 && (
+              <span
+                className={`rounded-full px-2 py-0.2 text-[10px] ${
+                  item.badgeColor || (statusFilter === item.key ? "bg-[#2c303f] text-white" : "text-[#717684]")
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span>{config.icon}</span>
-                  <span>{config.label}</span>
-                </div>
-                {count > 0 && (
-                  <span className={`rounded-full px-1.5 text-[10px] font-semibold ${config.bg} ${config.text}`}>
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Sync Footer */}
-        <div className="mt-auto border-t border-[#1a1c23] pt-3">
-          <button
-            onClick={() => fetchEmails(true)}
-            disabled={isSyncing}
-            className="flex w-full items-center justify-between rounded-lg border border-[#1e222d] bg-[#14171f] px-3 py-2 text-[#8e93a2] hover:bg-[#1c202a] hover:text-white transition disabled:opacity-50"
-          >
-            <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${isSyncing ? "bg-amber-400 animate-ping" : error ? "bg-red-500" : "bg-emerald-400"}`} />
-              <span className="font-medium text-[11px]">{isSyncing ? "Syncing Gmail & AI..." : "Live Pipeline Sync"}</span>
-            </div>
-            <span className={`text-xs ${isSyncing ? "animate-spin text-amber-400" : ""}`}>↻</span>
+                {item.count}
+              </span>
+            )}
           </button>
-        </div>
+        ))}
+      </div>
+
+      {/* Hubs / Categories */}
+      <div className="mt-4 mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-[#535868]">
+        <span>Category Hubs</span>
+        <span className="text-xs">▾</span>
+      </div>
+      <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar pr-1">
+        <button
+          onClick={() => {
+            setActiveCategory("ALL");
+            setIsMobileSidebarOpen(false);
+          }}
+          className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
+            activeCategory === "ALL"
+              ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
+              : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span>🌐</span>
+            <span>All Categories</span>
+          </div>
+          {stats?.total !== undefined && (
+            <span className="text-[10px] text-[#717684]">{stats.total}</span>
+          )}
+        </button>
+
+        {Object.entries(categoryConfig).map(([key, config]) => {
+          const count = stats?.categories?.[key] || 0;
+          return (
+            <button
+              key={key}
+              onClick={() => {
+                setActiveCategory(key);
+                setIsMobileSidebarOpen(false);
+              }}
+              className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-[12px] ${
+                activeCategory === key
+                  ? "bg-[#1c202a] font-semibold text-white border border-[#2b303f]"
+                  : "text-[#8e93a2] hover:bg-[#15171e] hover:text-white"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span>{config.icon}</span>
+                <span>{config.label}</span>
+              </div>
+              {count > 0 && (
+                <span className={`rounded-full px-1.5 text-[10px] font-semibold ${config.bg} ${config.text}`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Sync Footer */}
+      <div className="mt-auto border-t border-[#1a1c23] pt-3">
+        <button
+          onClick={() => fetchEmails(true)}
+          disabled={isSyncing}
+          className="flex w-full items-center justify-between rounded-lg border border-[#1e222d] bg-[#14171f] px-3 py-2 text-[#8e93a2] hover:bg-[#1c202a] hover:text-white transition disabled:opacity-50"
+        >
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${isSyncing ? "bg-amber-400 animate-ping" : error ? "bg-red-500" : "bg-emerald-400"}`} />
+            <span className="font-medium text-[11px]">{isSyncing ? "Syncing Gmail & AI..." : "Live Pipeline Sync"}</span>
+          </div>
+          <span className={`text-xs ${isSyncing ? "animate-spin text-amber-400" : ""}`}>↻</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-[#090a0d] font-sans text-[#e2e4e9] antialiased selection:bg-[#32363f]">
+      {/* ========================================================================= */}
+      {/* MOBILE DRAWER BACKDROP & OVERLAY */}
+      {/* ========================================================================= */}
+      {isMobileSidebarOpen && (
+        <div
+          onClick={() => setIsMobileSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden transition-opacity"
+        />
+      )}
+
+      {/* MOBILE DRAWER SIDEBAR */}
+      <div
+        className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#0e1014] border-r border-[#1a1c23] transform transition-transform duration-300 ease-in-out md:hidden ${
+          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        {renderSidebarContent()}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* COLUMN 1: DESKTOP LEFT SIDEBAR */}
+      {/* ========================================================================= */}
+      <aside className="hidden md:flex w-60 lg:w-64 shrink-0 flex-col border-r border-[#1a1c23] bg-[#0e1014]">
+        {renderSidebarContent()}
       </aside>
 
       {/* ========================================================================= */}
       {/* COLUMN 2: EMAIL LIST STREAM (Middle Pane) */}
       {/* ========================================================================= */}
-      <section className="flex w-[410px] shrink-0 flex-col border-r border-[#1a1c23] bg-[#0c0d11]">
-        {/* Header with Title & Sync status */}
-        <div className="flex items-center justify-between border-b border-[#1a1c23] px-4 py-3">
-          <div>
-            <h2 className="text-[14px] font-bold text-white flex items-center gap-2">
-              {activeCategory !== "ALL" ? categoryConfig[activeCategory]?.label || activeCategory : "Priority Inbox"}
+      <section
+        className={`flex flex-col border-r border-[#1a1c23] bg-[#0c0d11] shrink-0 ${
+          mobileView === "reader"
+            ? "hidden md:flex md:w-80 lg:w-[380px] xl:w-[410px]"
+            : "w-full md:w-80 lg:w-[380px] xl:w-[410px]"
+        }`}
+      >
+        {/* Header with Title, Mobile Drawer Trigger, & Sync status */}
+        <div className="flex items-center justify-between border-b border-[#1a1c23] px-3.5 py-3">
+          <div className="flex items-center gap-2">
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#232733] bg-[#14171f] text-[#8e93a2] hover:text-white md:hidden"
+              title="Open Navigation"
+            >
+              ☰
+            </button>
+            <h2 className="text-[14px] font-bold text-white flex items-center gap-1.5 truncate">
+              <span>{activeCategory !== "ALL" ? categoryConfig[activeCategory]?.label || activeCategory : "Priority Inbox"}</span>
               <span className="text-[11px] font-normal text-[#717684]">({emails.length})</span>
             </h2>
           </div>
+
           <button
             onClick={() => fetchEmails(true)}
             disabled={isSyncing}
-            className="flex items-center gap-1.5 rounded-lg border border-[#232733] bg-[#14171f] px-2.5 py-1 text-[11px] font-medium text-[#8e93a2] hover:text-white hover:border-[#373c4d] transition disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-[#232733] bg-[#14171f] px-2.5 py-1 text-[11px] font-medium text-[#8e93a2] hover:text-white hover:border-[#373c4d] transition disabled:opacity-50 shrink-0"
             title="Sync Latest Emails & AI Triage"
           >
             <span className={isSyncing ? "animate-spin text-amber-400" : ""}>↻</span>
-            <span>{isSyncing ? "Syncing..." : "Sync"}</span>
+            <span className="hidden sm:inline">{isSyncing ? "Syncing..." : "Sync"}</span>
           </button>
         </div>
 
@@ -480,7 +532,7 @@ export default function Home() {
                 key={t.key}
                 onClick={() => setTimeframe(t.key)}
                 title={t.title}
-                className={`rounded-lg py-1 text-[11px] font-semibold transition ${
+                className={`rounded-lg py-1 text-[11px] font-semibold transition truncate ${
                   timeframe === t.key
                     ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
                     : "bg-[#151820] text-[#717684] hover:bg-[#1a1e28] hover:text-white border border-transparent"
@@ -525,7 +577,10 @@ export default function Home() {
               return (
                 <div
                   key={email.gmail_id}
-                  onClick={() => setSelectedId(email.gmail_id)}
+                  onClick={() => {
+                    setSelectedId(email.gmail_id);
+                    setMobileView("reader");
+                  }}
                   className={`group relative flex cursor-pointer gap-2.5 rounded-xl p-3 transition border ${
                     isSelected
                       ? "bg-[#181b24] text-white border-amber-500/40 shadow-md"
@@ -537,7 +592,6 @@ export default function Home() {
                   {/* Left Column: Read Dot / Replied / Star */}
                   <div className="flex flex-col items-center justify-between pt-0.5 shrink-0">
                     <div className="flex flex-col items-center gap-1.5">
-                      {/* Unread Glow Indicator */}
                       {!email.is_read && (
                         <span
                           className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"
@@ -649,14 +703,26 @@ export default function Home() {
       </section>
 
       {/* ========================================================================= */}
-      {/* COLUMN 3: EMAIL READER & AI DRAFT ASSISTANT PANE */}
+      {/* COLUMN 3: EMAIL READER PANE */}
       {/* ========================================================================= */}
-      <main className="flex flex-1 flex-col bg-[#0e1014] overflow-hidden">
+      <main
+        className={`flex flex-1 flex-col bg-[#0e1014] overflow-hidden ${
+          mobileView === "list" ? "hidden md:flex" : "flex w-full"
+        }`}
+      >
         {selectedEmail ? (
           <>
             {/* Top Reader Action Bar */}
-            <header className="flex h-13 items-center justify-between border-b border-[#1a1c23] px-6 text-xs bg-[#101217]/50">
+            <header className="flex h-13 items-center justify-between border-b border-[#1a1c23] px-4 md:px-6 text-xs bg-[#101217]/50 shrink-0">
               <div className="flex items-center gap-2">
+                {/* Mobile Back to List Button */}
+                <button
+                  onClick={() => setMobileView("list")}
+                  className="flex items-center gap-1 rounded-lg border border-[#242835] bg-[#141720] px-2.5 py-1.5 font-bold text-white md:hidden"
+                >
+                  <span>← Back</span>
+                </button>
+
                 {/* Read / Unread toggle */}
                 <button
                   onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_read: !selectedEmail.is_read })}
@@ -672,13 +738,13 @@ export default function Home() {
                 {/* Replied toggle */}
                 <button
                   onClick={() => handleUpdateStatus(selectedEmail.gmail_id, { is_replied: !selectedEmail.is_replied })}
-                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition ${
+                  className={`hidden sm:flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition ${
                     selectedEmail.is_replied
                       ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-bold"
                       : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
                   }`}
                 >
-                  <span>↩️ {selectedEmail.is_replied ? "Replied" : "Mark as Replied"}</span>
+                  <span>↩️ {selectedEmail.is_replied ? "Replied" : "Mark Replied"}</span>
                 </button>
 
                 {/* Star toggle */}
@@ -690,7 +756,8 @@ export default function Home() {
                       : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
                   }`}
                 >
-                  <span>{selectedEmail.is_starred ? "★ Favorited" : "☆ Favorite"}</span>
+                  <span>{selectedEmail.is_starred ? "★" : "☆"}</span>
+                  <span className="hidden sm:inline">{selectedEmail.is_starred ? "Favorited" : "Favorite"}</span>
                 </button>
               </div>
 
@@ -708,7 +775,7 @@ export default function Home() {
             </header>
 
             {/* Email View Scroll Area */}
-            <div className="flex-1 overflow-y-auto px-8 py-6 max-w-4xl space-y-6">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-6 max-w-5xl space-y-6">
               {/* Subject Title & Tags */}
               <div className="border-b border-[#1a1c23] pb-5">
                 <div className="flex items-start gap-3">
@@ -718,7 +785,7 @@ export default function Home() {
                     }`}
                   />
                   <div className="flex-1">
-                    <h1 className="text-xl font-bold tracking-tight text-white leading-snug">
+                    <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white leading-snug">
                       {selectedEmail.subject || "(No Subject)"}
                     </h1>
 
@@ -758,8 +825,8 @@ export default function Home() {
 
               {/* AI Executive Summary Card */}
               {selectedEmail.summary && (
-                <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a12] via-[#1a1410] to-[#120f0d] p-4 shadow-lg">
-                  <div className="mb-2 flex items-center justify-between">
+                <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a12] via-[#1a1410] to-[#120f0d] p-4 sm:p-5 shadow-lg">
+                  <div className="mb-2 flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
                       <span>✨</span>
                       <span>AI Executive Summary (Ollama Triage)</span>
@@ -778,22 +845,22 @@ export default function Home() {
               )}
 
               {/* Sender & Recipient Information */}
-              <div className="flex items-start justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1e222d] text-sm font-bold text-white border border-[#2c3244]">
+              <div className="flex items-start justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4 flex-wrap gap-2">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1e222d] text-sm font-bold text-white border border-[#2c3244]">
                     {getInitials(selectedEmail.sender)}
                   </div>
-                  <div>
-                    <div className="font-semibold text-white text-[13px]">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-white text-[13px] truncate">
                       {getCleanSenderName(selectedEmail.sender)}
                     </div>
-                    <div className="text-xs text-[#717684]">
+                    <div className="text-xs text-[#717684] truncate">
                       {getSenderEmail(selectedEmail.sender)} <span className="text-[#4b4f5c]">→ {selectedEmail.recipient || "me"}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="text-right text-xs text-[#717684]">
+                <div className="text-left sm:text-right text-xs text-[#717684]">
                   <div>
                     {new Date(selectedEmail.received_at).toLocaleDateString(undefined, {
                       weekday: "short",
@@ -812,15 +879,15 @@ export default function Home() {
               </div>
 
               {/* Email Body Content */}
-              <div className="rounded-xl border border-[#1a1c23] bg-[#101217] p-5">
+              <div className="rounded-xl border border-[#1a1c23] bg-[#101217] p-4 sm:p-5">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[#555a66] mb-3">Email Message</h3>
-                <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans">
+                <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans break-words">
                   {selectedEmail.body || selectedEmail.snippet}
                 </div>
               </div>
 
               {/* Footer Quick Actions */}
-              <div className="flex items-center justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4">
+              <div className="flex items-center justify-between rounded-xl border border-[#1a1c23] bg-[#12141a] p-4 flex-wrap gap-3">
                 <div className="flex items-center gap-2 text-xs text-[#717684]">
                   <span>💡 Direct reply &amp; smart compose are available directly in Gmail.</span>
                 </div>
@@ -833,7 +900,7 @@ export default function Home() {
                         : "border-[#242835] bg-[#141720] text-[#8e93a2] hover:text-white"
                     }`}
                   >
-                    <span>↩️ {selectedEmail.is_replied ? "Marked as Replied" : "Mark as Replied"}</span>
+                    <span>↩️ {selectedEmail.is_replied ? "Marked Replied" : "Mark Replied"}</span>
                   </button>
 
                   <a
@@ -850,7 +917,7 @@ export default function Home() {
             </div>
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center text-[#555a66] gap-2">
+          <div className="flex flex-1 flex-col items-center justify-center text-[#555a66] gap-2 p-4 text-center">
             <span className="text-4xl">✉️</span>
             <p className="text-xs font-medium">Select an email from the left to view details and AI triage</p>
           </div>
