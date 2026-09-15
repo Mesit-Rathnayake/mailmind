@@ -775,7 +775,7 @@ export default function Home() {
             </header>
 
             {/* Email View Scroll Area */}
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-6 max-w-5xl space-y-6">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 lg:px-10 py-6 w-full space-y-6">
               {/* Subject Title & Tags */}
               <div className="border-b border-[#1a1c23] pb-5">
                 <div className="flex items-start gap-3">
