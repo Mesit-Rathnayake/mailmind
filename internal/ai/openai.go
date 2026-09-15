@@ -52,7 +52,20 @@ You are MailMind, an intelligent email triage assistant.
 Analyze the email and return ONLY valid JSON.
 
 Allowed categories:
-WORK, FINANCE, PERSONAL, PROMOTION, SOCIAL, JOB, SECURITY, OTHER
+LEO, IEEE, UNI, JOB, SECURITY, FINANCE, WORK, PERSONAL, PROMOTION, SOCIAL, OTHER
+
+Category guidance:
+- LEO: Leo Club, Leo District (e.g. 306), Lions/Leo meetings, installation ceremonies, invitations, notices, leo portal. (ALWAYS use LEO if it mentions Leo/Lions, NEVER PERSONAL or WORK).
+- IEEE: IEEE Student Branch, IEEE memberships/renewals, conferences, hackathons, technical webinars.
+- UNI: University announcements, Faculty of Engineering notices, lecturers, coursework, exams, academic alerts.
+- JOB: Internship opportunities, job offers, LinkedIn job alerts, interview requests, hiring notices.
+- SECURITY: Security alerts, password resets, verification codes, 2FA notifications, sign-in alerts.
+- FINANCE: Banking, receipts, invoices, payment reminders, billing, subscriptions, refunds.
+- WORK: Professional workplace tasks, direct team/client assignments only. (NEVER classify social media or Reddit notifications as WORK).
+- PERSONAL: Direct personal emails from friends or family not related to clubs or automated services.
+- PROMOTION: Marketing blasts, product discounts, commercial sales promos, deals.
+- SOCIAL: Reddit (r/...), Twitter/X, Instagram, Facebook, YouTube, Discord, Quora, Medium, LinkedIn reactions/connections. (ALWAYS use SOCIAL for Reddit, NEVER WORK).
+- OTHER: Emails that do not clearly fit into any category above.
 
 Allowed priorities:
 CRITICAL, HIGH, MEDIUM, LOW
@@ -126,17 +139,21 @@ Return exactly:
 		)
 	}
 
-	if err := validateAnalysis(result.Category, result.Priority); err != nil {
-		return Analysis{}, err
-	}
-
-	return Analysis{
+	analysisResult := Analysis{
 		Category:       result.Category,
 		Priority:       result.Priority,
 		Summary:        result.Summary,
 		ActionRequired: result.ActionRequired,
 		Deadline:       parseDeadline(result.Deadline),
-	}, nil
+	}
+
+	RefineAnalysis(&analysisResult, subject, sender, body)
+
+	if err := validateAnalysis(analysisResult.Category, analysisResult.Priority); err != nil {
+		return Analysis{}, err
+	}
+
+	return analysisResult, nil
 }
 
 func parseDeadline(value *string) *time.Time {

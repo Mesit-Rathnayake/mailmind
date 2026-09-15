@@ -46,23 +46,23 @@ func (a *OllamaAnalyzer) Analyze(subject, sender, body string) (Analysis, error)
 Analyze the provided email and output ONLY valid JSON matching the exact schema.
 
 Allowed categories:
-- LEO: Leo Club, Leo District, Lion/Leo meetings, installation ceremonies, invitations, notices.
+- LEO: Leo Club, Leo District (e.g. 306), Lions/Leo meetings, installation ceremonies, invitations, notices, leo portal. (ALWAYS use LEO if it mentions Leo/Lions, NEVER PERSONAL or WORK).
 - IEEE: IEEE Student Branch, IEEE memberships/renewals, conferences, hackathons, technical webinars.
 - UNI: University announcements, Faculty of Engineering notices, lecturers, coursework, exams, academic alerts.
-- JOB: Internship opportunities, job offers, LinkedIn job alerts, interview requests.
-- SECURITY: Security alerts, password resets, verification codes, 2FA notifications.
-- FINANCE: Banking, receipts, invoices, payment reminders, billing, subscriptions.
-- WORK: Professional work tasks, assignments, direct team/client projects.
-- PERSONAL: Direct personal emails from individuals, friends, family.
-- PROMOTION: Marketing blasts, product discounts, commercial newsletters, sales promotions.
-- SOCIAL: General social media notifications, LinkedIn network reactions/connections, digests.
+- JOB: Internship opportunities, job offers, LinkedIn job alerts, interview requests, hiring notices.
+- SECURITY: Security alerts, password resets, verification codes, 2FA notifications, sign-in alerts.
+- FINANCE: Banking, receipts, invoices, payment reminders, billing, subscriptions, refunds.
+- WORK: Professional workplace tasks, direct team/client assignments only. (NEVER classify social media or Reddit notifications as WORK).
+- PERSONAL: Direct 1-on-1 personal emails from friends/family not related to clubs, work, or automated services.
+- PROMOTION: Marketing blasts, product discounts, commercial sales promos, deals.
+- SOCIAL: Reddit (r/...), Twitter/X, Instagram, Facebook, YouTube, Discord, Quora, Medium, LinkedIn reactions/connections. (ALWAYS use SOCIAL for Reddit and social digests, NEVER WORK).
 - OTHER: Emails that do not clearly fit into any category above.
 
 Allowed priorities:
 - CRITICAL: Immediate action required within 24h (security alerts, urgent interview confirmations, payment failures).
 - HIGH: Important emails needing attention soon (work assignments, deadlines within a few days).
 - MEDIUM: Standard informational or actionable items with no immediate rush.
-- LOW: Newsletters, promotions, social digests, routine automated notifications.
+- LOW: Newsletters, promotions, social digests, Reddit notifications, routine automated notifications.
 
 Rules:
 1. category must be exactly one of: LEO, IEEE, UNI, JOB, SECURITY, FINANCE, WORK, PERSONAL, PROMOTION, SOCIAL, OTHER.
@@ -157,17 +157,22 @@ Email body:
 		analysis.Priority = "LOW"
 	}
 
-	if err := validateAnalysis(analysis.Category, analysis.Priority); err != nil {
-		return Analysis{}, err
-	}
-
-	return Analysis{
+	analysisResult := Analysis{
 		Category:       analysis.Category,
 		Priority:       analysis.Priority,
 		Summary:        analysis.Summary,
 		ActionRequired: analysis.ActionRequired,
 		Deadline:       parseOllamaDeadline(analysis.Deadline),
-	}, nil
+	}
+
+	// Refine with deterministic classification rules
+	RefineAnalysis(&analysisResult, subject, sender, body)
+
+	if err := validateAnalysis(analysisResult.Category, analysisResult.Priority); err != nil {
+		return Analysis{}, err
+	}
+
+	return analysisResult, nil
 }
 
 func parseOllamaDeadline(raw json.RawMessage) *time.Time {

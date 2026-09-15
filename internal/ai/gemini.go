@@ -61,16 +61,16 @@ Allowed categories:
 LEO, IEEE, UNI, JOB, SECURITY, FINANCE, WORK, PERSONAL, PROMOTION, SOCIAL, OTHER
 
 Category definitions:
-- LEO: Leo Club, Leo District, Lion/Leo meetings, installation ceremonies, invitations, and notices.
-- IEEE: IEEE Student Branch, conferences, hackathons, competitions, tech events, and webinars.
+- LEO: Leo Club, Leo District (e.g. 306), Lions/Leo meetings, installation ceremonies, invitations, notices, leo portal. (ALWAYS use LEO if it mentions Leo/Lions, NEVER PERSONAL or WORK).
+- IEEE: IEEE Student Branch, IEEE memberships/renewals, conferences, hackathons, competitions, tech events, and webinars.
 - UNI: University announcements, Faculty of Engineering notices, lecturers, coursework, exams, academic alerts.
-- JOB: Internship opportunities, job offers, LinkedIn job alerts, interview requests.
-- SECURITY: Security alerts, password resets, verification codes, 2FA notifications.
-- FINANCE: Banking, statements, receipts, invoices, subscription payments.
-- WORK: Professional work tasks, assignments, direct team projects.
-- PERSONAL: Direct personal emails from friends, family, or colleagues.
-- PROMOTION: Marketing blasts, product discounts, newsletter promotions.
-- SOCIAL: General social media updates, platform digests, non-urgent connection notices.
+- JOB: Internship opportunities, job offers, LinkedIn job alerts, interview requests, hiring notices.
+- SECURITY: Security alerts, password resets, verification codes, 2FA notifications, sign-in alerts.
+- FINANCE: Banking, statements, receipts, invoices, subscription payments, billing.
+- WORK: Professional workplace tasks, direct team/client project assignments only. (NEVER classify social media or Reddit notifications as WORK).
+- PERSONAL: Direct personal emails from friends or family not related to clubs or automated services.
+- PROMOTION: Marketing blasts, product discounts, newsletter promotions, deals.
+- SOCIAL: Reddit (r/...), Twitter/X, Instagram, Facebook, YouTube, Discord, Quora, Medium, LinkedIn reactions/connections. (ALWAYS use SOCIAL for Reddit, NEVER WORK).
 - OTHER: Any other emails that do not fit into the categories above.
 
 Allowed priorities:
@@ -199,17 +199,21 @@ Email body:
 		)
 	}
 
-	if err := validateAnalysis(result.Category, result.Priority); err != nil {
-		return Analysis{}, err
-	}
-
-	return Analysis{
+	analysisResult := Analysis{
 		Category:       result.Category,
 		Priority:       result.Priority,
 		Summary:        result.Summary,
 		ActionRequired: result.ActionRequired,
 		Deadline:       parseDeadline(result.Deadline),
-	}, nil
+	}
+
+	RefineAnalysis(&analysisResult, subject, sender, body)
+
+	if err := validateAnalysis(analysisResult.Category, analysisResult.Priority); err != nil {
+		return Analysis{}, err
+	}
+
+	return analysisResult, nil
 }
 
 func (a *GeminiAnalyzer) DraftReply(subject, sender, body, tone string) (string, error) {
