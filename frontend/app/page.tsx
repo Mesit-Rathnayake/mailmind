@@ -114,6 +114,38 @@ function formatRelativeDeadline(deadlineString: string | null): { text: string; 
   return { text: `Due ${deadline.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, urgent: false };
 }
 
+function cleanEmailContent(text: string): string {
+  if (!text) return "";
+
+  // Strip @import, @media rules and CSS declaration blocks { ... }
+  let cleaned = text
+    .replace(/@(?:import|media|keyframes|font-face)[^;{]*\{?[^}]*\}?;?/gi, " ")
+    .replace(/\{[^}]*\}/g, " ");
+
+  const lines = cleaned.split("\n");
+  const filteredLines = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (
+      trimmed.startsWith("#outlook") ||
+      trimmed.startsWith("@media") ||
+      trimmed.startsWith("@import") ||
+      trimmed.startsWith(".mj-") ||
+      trimmed.startsWith("table.mj-") ||
+      trimmed.startsWith("<!--") ||
+      trimmed.endsWith("-->") ||
+      trimmed.includes("mso-table-") ||
+      trimmed.includes("-webkit-text-size-adjust") ||
+      trimmed.includes(".moz-text-html")
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  return filteredLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export default function Home() {
   const [emails, setEmails] = useState<RankedEmail[]>([]);
   const [stats, setStats] = useState<EmailStats | null>(null);
@@ -876,8 +908,8 @@ export default function Home() {
               {/* Email Body Content */}
               <div className="rounded-xl border border-[#1a1c23] bg-[#101217] p-4 sm:p-5">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[#555a66] mb-3">Email Message</h3>
-                <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans break-words">
-                  {selectedEmail.body || selectedEmail.snippet}
+                <div className="text-[13px] leading-relaxed text-[#c6c9cf] whitespace-pre-wrap font-sans break-words space-y-3">
+                  {cleanEmailContent(selectedEmail.body || selectedEmail.snippet)}
                 </div>
               </div>
 

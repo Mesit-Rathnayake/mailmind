@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	stdhtml "html"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +15,62 @@ import (
 	gmailapi "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 )
+
+var (
+	cssBlockRegex     = regexp.MustCompile(`(?is)\{[^}]*\}`)
+	atRuleRegex       = regexp.MustCompile(`(?is)@(import|media|keyframes|font-face)[^;{]*\{?[^}]*\}?;?`)
+	multiSpaceRegex   = regexp.MustCompile(`[^\S\r\n]+`)
+	multiNewlineRegex = regexp.MustCompile(`\n{3,}`)
+)
+
+// cleanEmailText strips leftover CSS artifacts, tags, and cleans whitespace.
+func cleanEmailText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	// Unescape HTML entities (e.g. &nbsp;, &#39;, &amp;)
+	text = stdhtml.UnescapeString(text)
+	text = strings.ReplaceAll(text, "\u00a0", " ")
+
+	// Strip @import, @media rules
+	text = atRuleRegex.ReplaceAllString(text, " ")
+
+	// Strip raw CSS declaration blocks { ... }
+	text = cssBlockRegex.ReplaceAllString(text, " ")
+
+	// Process line by line
+	lines := strings.Split(text, "\n")
+	var cleanedLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(multiSpaceRegex.ReplaceAllString(line, " "))
+		if trimmed == "" {
+			if len(cleanedLines) > 0 && cleanedLines[len(cleanedLines)-1] != "" {
+				cleanedLines = append(cleanedLines, "")
+			}
+			continue
+		}
+
+		// Filter out stray CSS selector lines
+		if strings.HasPrefix(trimmed, "#outlook") ||
+			strings.HasPrefix(trimmed, "@media") ||
+			strings.HasPrefix(trimmed, "@import") ||
+			strings.HasPrefix(trimmed, ".mj-") ||
+			strings.HasPrefix(trimmed, "table.mj-") ||
+			strings.HasPrefix(trimmed, "<!--") ||
+			strings.HasSuffix(trimmed, "-->") ||
+			strings.Contains(trimmed, "mso-table-") ||
+			strings.Contains(trimmed, "-webkit-text-size-adjust") {
+			continue
+		}
+
+		cleanedLines = append(cleanedLines, trimmed)
+	}
+
+	result := strings.Join(cleanedLines, "\n")
+	result = multiNewlineRegex.ReplaceAllString(result, "\n\n")
+	return strings.TrimSpace(result)
+}
 
 func parseEmailDate(value string) time.Time {
 	// Remove optional timezone name, e.g. "(UTC)", "(IST)", "(CST)".
@@ -65,31 +123,56 @@ func decodeBody(data string) (string, error) {
 	return string(decoded), nil
 }
 
-// htmlToText converts HTML content into readable plain text.
+// htmlToText converts HTML content into readable plain text with structure and line breaks preserved.
 func htmlToText(content string) string {
 	doc, err := html.Parse(strings.NewReader(content))
 	if err != nil {
-		return content
+		return cleanEmailText(content)
 	}
 
 	var builder strings.Builder
 
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			tag := strings.ToLower(node.Data)
+			// Ignore style, script, head, etc. completely
+			switch tag {
+			case "style", "script", "head", "title", "noscript", "svg", "template", "xml":
+				return
+			case "br", "hr":
+				builder.WriteString("\n")
+			case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote":
+				builder.WriteString("\n\n")
+			case "li":
+				builder.WriteString("\n• ")
+			case "tr":
+				builder.WriteString("\n")
+			case "td", "th":
+				builder.WriteString(" ")
+			}
+		}
+
 		if node.Type == html.TextNode {
 			builder.WriteString(node.Data)
-			builder.WriteString(" ")
-			return
 		}
 
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			walk(child)
 		}
+
+		if node.Type == html.ElementNode {
+			tag := strings.ToLower(node.Data)
+			switch tag {
+			case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote":
+				builder.WriteString("\n")
+			}
+		}
 	}
 
 	walk(doc)
 
-	return strings.Join(strings.Fields(builder.String()), " ")
+	return cleanEmailText(builder.String())
 }
 
 // extractBody recursively walks Gmail's MIME structure.
@@ -145,12 +228,15 @@ func extractBody(payload *gmailapi.MessagePart) (string, error) {
 
 	// Prefer plain text because it is better for AI processing.
 	if strings.TrimSpace(plainText) != "" {
-		return strings.TrimSpace(plainText), nil
+		cleaned := cleanEmailText(plainText)
+		if cleaned != "" {
+			return cleaned, nil
+		}
 	}
 
 	// Fall back to HTML if no plain-text version exists.
 	if strings.TrimSpace(htmlText) != "" {
-		return strings.TrimSpace(htmlToText(htmlText)), nil
+		return htmlToText(htmlText), nil
 	}
 
 	return "", nil
